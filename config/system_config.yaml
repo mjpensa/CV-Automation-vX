@@ -1,0 +1,36 @@
+agents:
+  agent1_input_validator:
+    enabled: true
+    max_file_size_mb: 10
+    supported_formats: ['.pdf', '.docx', '.txt']
+
+  agent3_semantic_extractor:
+    model: "gemini-2.5-flash-preview-09-2025"
+    temperature: 0.0  # DETERMINISM MANDATE - REQ-DET-01
+    top_p: 0.1
+    top_k: 1
+    max_tokens: 8192
+    retry_attempts: 3
+
+  agent6_content_transformer:
+    model: "gemini-2.5-flash-preview-09-2025"
+    temperature: 0.0  # DETERMINISM MANDATE - REQ-DET-01
+    top_p: 0.1
+    top_k: 1
+    hard_limit_enforcement: true
+    max_retry_attempts: 3
+
+pipeline:
+  deterministic_mode: true  # CRITICAL: Ensure identical outputs on re-run
+  generate_traceability: true
+  export_formats: ['json', 'excel', 'html']
+
+validation:
+  strict_schema_enforcement: true
+  temporal_verification: true
+  semantic_enrichment: true
+
+determinism:
+  verify_on_completion: true  # Run determinism tests after each agent
+  log_all_transformations: true  # Full before/after logging
+  hash_outputs: true  # Enable output hashing for comparison
