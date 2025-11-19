@@ -1,0 +1,59 @@
+John Smith
+john.smith@email.com | +1-555-0123
+New York, NY | linkedin.com/in/johnsmith
+
+PROFESSIONAL EXPERIENCE
+
+Senior Consultant - McKinsey & Company
+January 2023 - Present
+• Lead digital transformation projects for Fortune 500 clients across oil & gas and banking sectors
+• Manage cross-functional teams of 15+ consultants across 3 countries
+• Implemented Python-based analytics platform reducing client processing time by 60%
+• Advise banking clients on regulatory compliance and risk management frameworks
+• Developed strategic roadmaps for 5 oil & gas companies transitioning to renewable energy
+
+Consultant - Deloitte Consulting
+June 2020 - December 2022
+• Developed go-to-market strategy frameworks for fintech startups
+• Conducted comprehensive market analysis for healthcare industry clients
+• Created financial models using Excel and Python for investment decisions
+• Led workshops on digital innovation with C-level executives
+• Managed projects with budgets exceeding $2M
+
+Business Analyst - Accenture
+August 2018 - May 2020
+• Analyzed business requirements for technology implementation projects
+• Created detailed process maps and workflow diagrams
+• Coordinated with development teams to ensure on-time delivery
+• Presented findings to senior stakeholders weekly
+• Improved operational efficiency by 25% through process optimization
+
+EDUCATION
+
+Master of Business Administration (MBA), Finance
+Harvard Business School, 2020
+GPA: 3.9/4.0
+Honors: Dean's List, Baker Scholar
+
+Bachelor of Science, Computer Science
+Massachusetts Institute of Technology (MIT), 2018
+GPA: 3.8/4.0
+Honors: Cum Laude, Tau Beta Pi Engineering Honor Society
+
+SKILLS
+
+Technical: Python, SQL, Tableau, Power BI, Excel (Advanced), R, JavaScript, Machine Learning, Data Analytics
+Soft Skills: Strategic Planning, Leadership, Project Management, Stakeholder Management, Public Speaking
+Languages: English (Native), Spanish (Fluent), Mandarin (Conversational)
+Certifications: PMP (Project Management Professional), AWS Certified Solutions Architect, Six Sigma Green Belt
+
+PROJECTS
+
+Oil & Gas Digital Transformation (McKinsey)
+Led 12-month engagement transforming legacy systems for major energy company. Implemented cloud-based analytics platform processing 10TB+ daily data. Resulted in $50M annual cost savings.
+
+Healthcare Analytics Platform (Deloitte)
+Developed predictive analytics solution for hospital network. Built models forecasting patient admission rates with 92% accuracy. Reduced emergency room wait times by 35%.
+
+Financial Services Automation (Accenture)
+Automated manual reconciliation processes using Python and RPA. Eliminated 10,000+ hours of manual work annually. Improved accuracy from 87% to 99.5%.
