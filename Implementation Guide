@@ -1,1 +1,4959 @@
+# Comprehensive Implementation Plan for CV-to-PowerPoint Gold Standard System
+## For Claude Code 4.5 Execution
 
+---
+
+## 📋 Project Overview
+
+**System Name**: CV-to-PowerPoint Automation System (Gold Standard)  
+**Target Environment**: Python 3.10+  
+**Key Dependencies**: Google Gemini API, python-pptx, JSON Schema validators  
+**Architecture**: 6-Agent Pipeline with Deterministic Processing  
+
+---
+
+## 🎯 Phase 0: Project Initialization & Environment Setup
+
+### Objectives
+- Create project structure
+- Set up virtual environment
+- Install dependencies
+- Configure API keys
+- Establish logging infrastructure
+
+### Tasks
+
+#### Task 0.1: Create Project Structure
+```bash
+project_root/
+├── src/
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── agent1_input_validator.py
+│   │   ├── agent2_template_loader.py
+│   │   ├── agent3_semantic_extractor.py
+│   │   ├── agent4_mapping_engine.py
+│   │   ├── agent5_placeholder_analyzer.py
+│   │   ├── agent6_content_transformer.py
+│   │   └── base_agent.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── schemas.py
+│   │   ├── validators.py
+│   │   ├── exceptions.py
+│   │   └── config.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── logger.py
+│   │   ├── file_handler.py
+│   │   └── gemini_client.py
+│   └── pipeline/
+│       ├── __init__.py
+│       ├── orchestrator.py
+│       └── traceability.py
+├── tests/
+│   ├── test_agents/
+│   ├── test_integration/
+│   └── fixtures/
+├── docs/
+│   ├── architecture.md
+│   ├── api_reference.md
+│   └── traceability_matrix.md
+├── config/
+│   ├── schemas/
+│   │   ├── cv_schema.json
+│   │   └── template_schema.json
+│   └── rules/
+│       └── transformation_rules.json
+├── outputs/
+│   └── traceability/
+├── requirements.txt
+├── setup.py
+├── .env.example
+└── README.md
+```
+
+**Claude Code Commands:**
+```bash
+# Create directory structure
+mkdir -p src/{agents,core,utils,pipeline}
+mkdir -p tests/{test_agents,test_integration,fixtures}
+mkdir -p docs config/{schemas,rules} outputs/traceability
+touch src/agents/__init__.py src/core/__init__.py src/utils/__init__.py src/pipeline/__init__.py
+```
+
+#### Task 0.2: Create requirements.txt
+**File**: `requirements.txt`
+```txt
+# Core Dependencies
+google-generativeai==0.3.2
+python-pptx==0.6.23
+python-docx==1.1.0
+jsonschema==4.20.0
+pydantic==2.5.0
+
+# Data Processing
+pandas==2.1.4
+openpyxl==3.1.2
+
+# Utilities
+python-dotenv==1.0.0
+pyyaml==6.0.1
+tenacity==8.2.3
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# Development
+black==23.12.1
+flake8==7.0.0
+mypy==1.8.0
+```
+
+#### Task 0.3: Create Configuration Files
+
+**File**: `.env.example`
+```bash
+# Google Gemini API Configuration
+GEMINI_API_KEY=your_api_key_here
+GEMINI_MODEL=gemini-1.5-flash
+
+# System Configuration
+TEMPERATURE=0.0
+MAX_RETRIES=3
+TIMEOUT_SECONDS=30
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FILE=outputs/system.log
+
+# Output Paths
+OUTPUT_DIR=outputs/
+TRACEABILITY_DIR=outputs/traceability/
+```
+
+**File**: `config/system_config.yaml`
+```yaml
+agents:
+  agent1_input_validator:
+    enabled: true
+    max_file_size_mb: 10
+    supported_formats: ['.pdf', '.docx', '.txt']
+    
+  agent3_semantic_extractor:
+    model: "gemini-1.5-flash"
+    temperature: 0.0
+    max_tokens: 8192
+    retry_attempts: 3
+    
+  agent6_content_transformer:
+    model: "gemini-1.5-flash"
+    temperature: 0.0
+    hard_limit_enforcement: true
+
+pipeline:
+  deterministic_mode: true
+  generate_traceability: true
+  export_formats: ['json', 'excel', 'html']
+
+validation:
+  strict_schema_enforcement: true
+  temporal_verification: true
+  semantic_enrichment: true
+```
+
+#### Task 0.4: Setup Base Infrastructure
+
+**File**: `src/core/config.py`
+```python
+"""Configuration management for the CV automation system."""
+import os
+from pathlib import Path
+from typing import Dict, Any
+import yaml
+from dotenv import load_dotenv
+
+class SystemConfig:
+    """Centralized configuration manager."""
+    
+    def __init__(self, config_path: str = "config/system_config.yaml"):
+        load_dotenv()
+        self.config_path = Path(config_path)
+        self.config = self._load_config()
+        self.api_key = os.getenv("GEMINI_API_KEY")
+        self.validate()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """Load YAML configuration."""
+        if not self.config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {self.config_path}")
+        
+        with open(self.config_path, 'r') as f:
+            return yaml.safe_load(f)
+    
+    def validate(self):
+        """Validate configuration."""
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY not found in environment")
+        
+        required_sections = ['agents', 'pipeline', 'validation']
+        for section in required_sections:
+            if section not in self.config:
+                raise ValueError(f"Missing required config section: {section}")
+    
+    def get_agent_config(self, agent_name: str) -> Dict[str, Any]:
+        """Get configuration for specific agent."""
+        return self.config['agents'].get(agent_name, {})
+    
+    def get_pipeline_config(self) -> Dict[str, Any]:
+        """Get pipeline configuration."""
+        return self.config['pipeline']
+
+# Global config instance
+config = SystemConfig()
+```
+
+**File**: `src/utils/logger.py`
+```python
+"""Centralized logging system with traceability."""
+import logging
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Any, Dict
+from enum import Enum
+
+class LogLevel(Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+class SystemLogger:
+    """Enhanced logger with structured output and traceability."""
+    
+    def __init__(self, name: str, log_file: str = "outputs/system.log"):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.INFO)
+        
+        # File handler
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(logging.INFO)
+        
+        # Console handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        
+        # Formatter
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        fh.setFormatter(formatter)
+        ch.setFormatter(formatter)
+        
+        self.logger.addHandler(fh)
+        self.logger.addHandler(ch)
+        
+        self.trace_log = []
+    
+    def log_agent_execution(self, agent_name: str, input_data: Any, 
+                           output_data: Any, metadata: Dict):
+        """Log agent execution with full traceability."""
+        trace_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "agent": agent_name,
+            "input_hash": hash(str(input_data)),
+            "output_hash": hash(str(output_data)),
+            "metadata": metadata
+        }
+        self.trace_log.append(trace_entry)
+        
+        self.logger.info(f"Agent {agent_name} executed: {metadata.get('status', 'unknown')}")
+    
+    def export_trace_log(self, output_path: str):
+        """Export complete trace log."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, 'w') as f:
+            json.dump(self.trace_log, f, indent=2)
+    
+    def info(self, message: str):
+        self.logger.info(message)
+    
+    def error(self, message: str):
+        self.logger.error(message)
+    
+    def warning(self, message: str):
+        self.logger.warning(message)
+
+# Global logger instance
+logger = SystemLogger("CVAutomation")
+```
+
+**Validation Criteria:**
+- ✅ All directories created
+- ✅ Dependencies installed (`pip install -r requirements.txt`)
+- ✅ Configuration loads without errors
+- ✅ Logger writes to file successfully
+
+---
+
+## 🏗️ Phase 1: Core Infrastructure & Schemas
+
+### Objectives
+- Define strict JSON schemas for all data structures
+- Create base agent class with deterministic processing
+- Implement validation framework
+- Setup exception hierarchy
+
+### Tasks
+
+#### Task 1.1: Define Data Schemas
+
+**File**: `src/core/schemas.py`
+```python
+"""Strict data schemas for the CV automation system."""
+from dataclasses import dataclass, field, asdict
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from enum import Enum
+import json
+
+class DateStatus(Enum):
+    """Temporal status of work experience."""
+    CURRENT = "current"
+    PAST = "past"
+    UNKNOWN = "unknown"
+
+class ConfidenceLevel(Enum):
+    """Confidence levels for extracted data."""
+    HIGH = "high"          # > 0.8
+    MEDIUM = "medium"      # 0.5 - 0.8
+    LOW = "low"            # < 0.5
+
+@dataclass
+class PersonalInfo:
+    """Personal information schema."""
+    full_name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    linkedin: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+@dataclass
+class Project:
+    """Project within work experience."""
+    name: str
+    description: str
+    role: str
+    technologies: List[str] = field(default_factory=list)
+    outcomes: List[str] = field(default_factory=list)
+    client_industry: Optional[str] = None
+
+@dataclass
+class WorkExperience:
+    """Work experience with semantic metadata."""
+    company_name: str
+    job_title: str
+    start_date: str  # YYYY-MM format
+    end_date: Optional[str]  # YYYY-MM format or None
+    is_current: bool
+    employer_industry: str
+    client_industries: List[str] = field(default_factory=list)
+    responsibilities: List[str] = field(default_factory=list)
+    projects: List[Project] = field(default_factory=list)
+    skills_used: List[str] = field(default_factory=list)
+    
+    # Semantic metadata
+    temporal_confidence: float = 1.0
+    date_status: DateStatus = DateStatus.UNKNOWN
+    duration_months: Optional[int] = None
+    
+    def to_dict(self) -> Dict:
+        data = asdict(self)
+        data['date_status'] = self.date_status.value
+        return data
+    
+    def calculate_duration(self) -> int:
+        """Calculate duration in months."""
+        try:
+            start = datetime.strptime(self.start_date, "%Y-%m")
+            if self.is_current:
+                end = datetime.now()
+            else:
+                end = datetime.strptime(self.end_date, "%Y-%m")
+            
+            self.duration_months = (end.year - start.year) * 12 + (end.month - start.month)
+            return self.duration_months
+        except:
+            return 0
+
+@dataclass
+class Education:
+    """Education schema."""
+    institution: str
+    degree: str
+    field: str
+    graduation_date: Optional[str] = None
+    gpa: Optional[float] = None
+    honors: List[str] = field(default_factory=list)
+
+@dataclass
+class Skills:
+    """Skills categorization."""
+    technical: List[str] = field(default_factory=list)
+    soft: List[str] = field(default_factory=list)
+    languages: List[str] = field(default_factory=list)
+    certifications: List[str] = field(default_factory=list)
+    tools: List[str] = field(default_factory=list)
+
+@dataclass
+class CVData:
+    """Complete CV data structure with strict typing."""
+    personal_info: PersonalInfo
+    work_experience: List[WorkExperience]
+    education: List[Education]
+    skills: Skills
+    
+    # Metadata
+    extraction_timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    extraction_confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    source_file: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return {
+            "personal_info": self.personal_info.to_dict(),
+            "work_experience": [exp.to_dict() for exp in self.work_experience],
+            "education": [asdict(edu) for edu in self.education],
+            "skills": asdict(self.skills),
+            "metadata": {
+                "extraction_timestamp": self.extraction_timestamp,
+                "extraction_confidence": self.extraction_confidence.value,
+                "source_file": self.source_file
+            }
+        }
+    
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), indent=2)
+
+@dataclass
+class PlaceholderMapping:
+    """Mapping between CV data and PowerPoint placeholder."""
+    placeholder_id: str
+    placeholder_type: str  # text, image, table
+    source_field: str      # Path to CV data field
+    transformation_rules: Dict[str, Any] = field(default_factory=dict)
+    priority: int = 0
+    
+@dataclass
+class TransformationResult:
+    """Result of content transformation."""
+    placeholder_id: str
+    original_text: str
+    transformed_text: str
+    rules_applied: Dict[str, Any]
+    compliance_status: str  # "full", "partial", "failed"
+    transformations: List[Dict[str, Any]] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+# JSON Schema Definitions
+CV_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "personal_info": {
+            "type": "object",
+            "properties": {
+                "full_name": {"type": "string", "minLength": 1},
+                "email": {"type": ["string", "null"], "format": "email"},
+                "phone": {"type": ["string", "null"]},
+                "location": {"type": ["string", "null"]},
+                "linkedin": {"type": ["string", "null"], "format": "uri"}
+            },
+            "required": ["full_name"]
+        },
+        "work_experience": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "company_name": {"type": "string", "minLength": 1},
+                    "job_title": {"type": "string", "minLength": 1},
+                    "start_date": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-(0[1-9]|1[0-2])$"
+                    },
+                    "end_date": {
+                        "type": ["string", "null"],
+                        "pattern": "^\\d{4}-(0[1-9]|1[0-2])$|^$"
+                    },
+                    "is_current": {"type": "boolean"},
+                    "employer_industry": {"type": "string"},
+                    "client_industries": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "responsibilities": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    },
+                    "skills_used": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["company_name", "job_title", "start_date", "is_current"]
+            }
+        },
+        "education": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "institution": {"type": "string"},
+                    "degree": {"type": "string"},
+                    "field": {"type": "string"}
+                },
+                "required": ["institution", "degree"]
+            }
+        },
+        "skills": {
+            "type": "object",
+            "properties": {
+                "technical": {"type": "array", "items": {"type": "string"}},
+                "soft": {"type": "array", "items": {"type": "string"}},
+                "certifications": {"type": "array", "items": {"type": "string"}}
+            }
+        }
+    },
+    "required": ["personal_info", "work_experience"]
+}
+```
+
+**File**: `config/schemas/cv_schema.json`
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CV Data Schema",
+  "type": "object",
+  "properties": {
+    "personal_info": {
+      "type": "object",
+      "properties": {
+        "full_name": {"type": "string", "minLength": 1},
+        "email": {"type": ["string", "null"], "format": "email"}
+      },
+      "required": ["full_name"]
+    },
+    "work_experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["company_name", "job_title", "start_date", "is_current"]
+      }
+    }
+  },
+  "required": ["personal_info", "work_experience"]
+}
+```
+
+#### Task 1.2: Create Validation Framework
+
+**File**: `src/core/validators.py`
+```python
+"""Validation framework for strict data integrity."""
+import re
+import json
+from typing import Dict, List, Tuple, Any
+from datetime import datetime
+from jsonschema import validate, ValidationError as JSONSchemaValidationError
+from .schemas import CV_JSON_SCHEMA, CVData, WorkExperience
+from .exceptions import ValidationError, SchemaViolationError
+
+class DataValidator:
+    """Comprehensive data validation with strict enforcement."""
+    
+    @staticmethod
+    def validate_date_format(date_str: str) -> Tuple[bool, str]:
+        """
+        Validate date format (YYYY-MM).
+        Returns: (is_valid, error_message)
+        """
+        pattern = r'^\d{4}-(0[1-9]|1[0-2])$'
+        if not re.match(pattern, date_str):
+            return False, f"Invalid date format: {date_str}. Expected YYYY-MM"
+        
+        try:
+            datetime.strptime(date_str, "%Y-%m")
+            return True, ""
+        except ValueError as e:
+            return False, f"Invalid date: {date_str}. {str(e)}"
+    
+    @staticmethod
+    def validate_email(email: str) -> Tuple[bool, str]:
+        """Validate email format."""
+        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(pattern, email):
+            return False, f"Invalid email format: {email}"
+        return True, ""
+    
+    @staticmethod
+    def validate_json_schema(data: Dict, schema: Dict = CV_JSON_SCHEMA) -> Tuple[bool, str]:
+        """
+        Validate data against JSON schema.
+        Returns: (is_valid, error_message)
+        """
+        try:
+            validate(instance=data, schema=schema)
+            return True, ""
+        except JSONSchemaValidationError as e:
+            return False, f"Schema validation failed: {e.message}"
+    
+    @staticmethod
+    def validate_temporal_consistency(work_experiences: List[WorkExperience]) -> Tuple[bool, List[str]]:
+        """
+        Validate temporal consistency across work experiences.
+        Checks for:
+        - Date overlaps
+        - Future dates
+        - End date before start date
+        """
+        errors = []
+        
+        for i, exp in enumerate(work_experiences):
+            # Check start date validity
+            is_valid, msg = DataValidator.validate_date_format(exp.start_date)
+            if not is_valid:
+                errors.append(f"Experience {i}: {msg}")
+            
+            # Check end date if present
+            if exp.end_date and not exp.is_current:
+                is_valid, msg = DataValidator.validate_date_format(exp.end_date)
+                if not is_valid:
+                    errors.append(f"Experience {i}: {msg}")
+                
+                # Check chronological order
+                try:
+                    start = datetime.strptime(exp.start_date, "%Y-%m")
+                    end = datetime.strptime(exp.end_date, "%Y-%m")
+                    if end < start:
+                        errors.append(
+                            f"Experience {i}: End date {exp.end_date} before start date {exp.start_date}"
+                        )
+                except:
+                    pass
+            
+            # Check for future start dates
+            try:
+                start = datetime.strptime(exp.start_date, "%Y-%m")
+                if start > datetime.now():
+                    errors.append(
+                        f"Experience {i}: Start date {exp.start_date} is in the future"
+                    )
+            except:
+                pass
+        
+        return len(errors) == 0, errors
+    
+    @staticmethod
+    def validate_cv_data(cv_data: CVData) -> Tuple[bool, List[str]]:
+        """
+        Comprehensive validation of CV data.
+        Returns: (is_valid, list_of_errors)
+        """
+        errors = []
+        
+        # Validate personal info
+        if not cv_data.personal_info.full_name:
+            errors.append("Personal info: full_name is required")
+        
+        if cv_data.personal_info.email:
+            is_valid, msg = DataValidator.validate_email(cv_data.personal_info.email)
+            if not is_valid:
+                errors.append(f"Personal info: {msg}")
+        
+        # Validate work experience
+        if not cv_data.work_experience:
+            errors.append("At least one work experience is required")
+        else:
+            is_valid, temporal_errors = DataValidator.validate_temporal_consistency(
+                cv_data.work_experience
+            )
+            errors.extend(temporal_errors)
+        
+        # Validate JSON schema
+        is_valid, msg = DataValidator.validate_json_schema(cv_data.to_dict())
+        if not is_valid:
+            errors.append(msg)
+        
+        return len(errors) == 0, errors
+
+class ContentValidator:
+    """Validator for transformed content."""
+    
+    @staticmethod
+    def validate_character_limit(text: str, max_chars: int) -> Tuple[bool, int]:
+        """
+        Validate character limit compliance.
+        Returns: (is_compliant, actual_length)
+        """
+        actual_length = len(text)
+        return actual_length <= max_chars, actual_length
+    
+    @staticmethod
+    def validate_formatting(text: str, required_formatting: Dict[str, bool]) -> Tuple[bool, List[str]]:
+        """
+        Validate that required formatting is present.
+        Returns: (is_valid, list_of_missing_formats)
+        """
+        missing = []
+        
+        if required_formatting.get("bold"):
+            if "**" not in text and "<b>" not in text.lower():
+                missing.append("bold")
+        
+        if required_formatting.get("italic"):
+            if "*" not in text and "<i>" not in text.lower():
+                missing.append("italic")
+        
+        if required_formatting.get("bullets"):
+            if not any(marker in text for marker in ["•", "-", "*", "◦"]):
+                missing.append("bullets")
+        
+        return len(missing) == 0, missing
+```
+
+#### Task 1.3: Define Exception Hierarchy
+
+**File**: `src/core/exceptions.py`
+```python
+"""Custom exception hierarchy for error handling."""
+
+class CVAutomationError(Exception):
+    """Base exception for CV automation system."""
+    pass
+
+class ValidationError(CVAutomationError):
+    """Raised when data validation fails."""
+    pass
+
+class SchemaViolationError(ValidationError):
+    """Raised when data violates JSON schema."""
+    pass
+
+class TemporalInconsistencyError(ValidationError):
+    """Raised when dates are temporally inconsistent."""
+    pass
+
+class ExtractionError(CVAutomationError):
+    """Raised when CV extraction fails."""
+    pass
+
+class TransformationError(CVAutomationError):
+    """Raised when content transformation fails."""
+    pass
+
+class TemplateError(CVAutomationError):
+    """Raised when template loading/processing fails."""
+    pass
+
+class MappingError(CVAutomationError):
+    """Raised when CV-to-template mapping fails."""
+    pass
+
+class APIError(CVAutomationError):
+    """Raised when Gemini API calls fail."""
+    pass
+
+class RetryExhaustedError(APIError):
+    """Raised when all retry attempts are exhausted."""
+    pass
+```
+
+#### Task 1.4: Create Base Agent Class
+
+**File**: `src/agents/base_agent.py`
+```python
+"""Base agent class with deterministic processing framework."""
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+import json
+from ..core.config import config
+from ..core.exceptions import CVAutomationError
+from ..utils.logger import logger
+
+class BaseAgent(ABC):
+    """
+    Abstract base class for all agents with deterministic processing.
+    Implements REQ-DET-01, REQ-DET-02, REQ-DET-03
+    """
+    
+    def __init__(self, agent_name: str, temperature: float = 0.0):
+        self.agent_name = agent_name
+        self.temperature = temperature
+        self.execution_log = []
+        self.config = config.get_agent_config(agent_name)
+        
+    @abstractmethod
+    def process(self, input_data: Any) -> Any:
+        """Main processing method - must be implemented by subclasses."""
+        pass
+    
+    def execute(self, input_data: Any) -> Dict[str, Any]:
+        """
+        Execute agent with full logging and error handling.
+        Returns standardized result dictionary.
+        """
+        execution_id = f"{self.agent_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        start_time = datetime.now()
+        
+        try:
+            logger.info(f"Starting {self.agent_name} execution: {execution_id}")
+            
+            # Validate input
+            self.validate_input(input_data)
+            
+            # Process
+            result = self.process(input_data)
+            
+            # Validate output
+            self.validate_output(result)
+            
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            # Log successful execution
+            log_entry = {
+                "execution_id": execution_id,
+                "agent": self.agent_name,
+                "status": "success",
+                "execution_time": execution_time,
+                "timestamp": datetime.now().isoformat(),
+                "input_hash": hash(str(input_data)),
+                "output_hash": hash(str(result))
+            }
+            self.execution_log.append(log_entry)
+            
+            logger.log_agent_execution(
+                self.agent_name,
+                input_data,
+                result,
+                {"status": "success", "execution_time": execution_time}
+            )
+            
+            return {
+                "status": "success",
+                "agent": self.agent_name,
+                "execution_id": execution_id,
+                "result": result,
+                "metadata": {
+                    "execution_time": execution_time,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+            
+        except Exception as e:
+            execution_time = (datetime.now() - start_time).total_seconds()
+            
+            # Log failed execution
+            log_entry = {
+                "execution_id": execution_id,
+                "agent": self.agent_name,
+                "status": "failed",
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "execution_time": execution_time,
+                "timestamp": datetime.now().isoformat()
+            }
+            self.execution_log.append(log_entry)
+            
+            logger.error(f"{self.agent_name} failed: {str(e)}")
+            
+            return {
+                "status": "failed",
+                "agent": self.agent_name,
+                "execution_id": execution_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "metadata": {
+                    "execution_time": execution_time,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+    
+    def validate_input(self, input_data: Any):
+        """Validate input data - can be overridden by subclasses."""
+        if input_data is None:
+            raise CVAutomationError(f"{self.agent_name}: Input data cannot be None")
+    
+    def validate_output(self, output_data: Any):
+        """Validate output data - can be overridden by subclasses."""
+        if output_data is None:
+            raise CVAutomationError(f"{self.agent_name}: Output data cannot be None")
+    
+    def get_execution_log(self) -> List[Dict]:
+        """Return complete execution log."""
+        return self.execution_log
+    
+    def export_log(self, output_path: str):
+        """Export execution log to JSON file."""
+        with open(output_path, 'w') as f:
+            json.dump(self.execution_log, f, indent=2)
+```
+
+**Validation Criteria:**
+- ✅ All schema classes instantiate correctly
+- ✅ JSON schema validation works
+- ✅ Base agent class can be inherited
+- ✅ Validators catch invalid data
+- ✅ Exceptions can be raised and caught
+
+---
+
+## 🤖 Phase 2: Agent Development (Sequential Implementation)
+
+### Phase 2.1: Agent 1 - Input Validator
+
+**File**: `src/agents/agent1_input_validator.py`
+```python
+"""Agent 1: Input validation and file processing."""
+import os
+from pathlib import Path
+from typing import Dict, Any, Tuple
+from docx import Document
+import PyPDF2
+from .base_agent import BaseAgent
+from ..core.exceptions import ValidationError
+from ..utils.logger import logger
+
+class Agent1_InputValidator(BaseAgent):
+    """
+    Validates input CV files and extracts text.
+    Implements REQ-A1-01: Multi-format support
+    """
+    
+    SUPPORTED_FORMATS = {'.pdf', '.docx', '.txt'}
+    MAX_FILE_SIZE_MB = 10
+    
+    def __init__(self):
+        super().__init__("agent1_input_validator")
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process and validate input CV file.
+        
+        Args:
+            input_data: {
+                "file_path": str,
+                "format": str (optional)
+            }
+        
+        Returns:
+            {
+                "text": str,
+                "format": str,
+                "file_size_mb": float,
+                "validation_status": str
+            }
+        """
+        file_path = input_data.get("file_path")
+        if not file_path:
+            raise ValidationError("file_path is required")
+        
+        # Validate file exists
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise ValidationError(f"File not found: {file_path}")
+        
+        # Validate format
+        file_format = file_path.suffix.lower()
+        if file_format not in self.SUPPORTED_FORMATS:
+            raise ValidationError(
+                f"Unsupported format: {file_format}. "
+                f"Supported: {', '.join(self.SUPPORTED_FORMATS)}"
+            )
+        
+        # Validate file size
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        if file_size_mb > self.MAX_FILE_SIZE_MB:
+            raise ValidationError(
+                f"File too large: {file_size_mb:.2f}MB. "
+                f"Maximum: {self.MAX_FILE_SIZE_MB}MB"
+            )
+        
+        # Extract text
+        text = self._extract_text(file_path, file_format)
+        
+        if not text or len(text.strip()) < 50:
+            raise ValidationError("Extracted text is too short or empty")
+        
+        return {
+            "text": text,
+            "format": file_format,
+            "file_size_mb": file_size_mb,
+            "file_path": str(file_path),
+            "validation_status": "valid",
+            "text_length": len(text)
+        }
+    
+    def _extract_text(self, file_path: Path, file_format: str) -> str:
+        """Extract text from file based on format."""
+        if file_format == '.pdf':
+            return self._extract_from_pdf(file_path)
+        elif file_format == '.docx':
+            return self._extract_from_docx(file_path)
+        elif file_format == '.txt':
+            return self._extract_from_txt(file_path)
+        else:
+            raise ValidationError(f"Unsupported format: {file_format}")
+    
+    def _extract_from_pdf(self, file_path: Path) -> str:
+        """Extract text from PDF."""
+        text = []
+        try:
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text.append(page.extract_text())
+            return '\n'.join(text)
+        except Exception as e:
+            raise ValidationError(f"Failed to extract from PDF: {str(e)}")
+    
+    def _extract_from_docx(self, file_path: Path) -> str:
+        """Extract text from DOCX."""
+        try:
+            doc = Document(file_path)
+            text = [para.text for para in doc.paragraphs]
+            return '\n'.join(text)
+        except Exception as e:
+            raise ValidationError(f"Failed to extract from DOCX: {str(e)}")
+    
+    def _extract_from_txt(self, file_path: Path) -> str:
+        """Extract text from TXT."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                return file.read()
+        except Exception as e:
+            raise ValidationError(f"Failed to extract from TXT: {str(e)}")
+```
+
+### Phase 2.2: Agent 2 - Template Loader
+
+**File**: `src/agents/agent2_template_loader.py`
+```python
+"""Agent 2: PowerPoint template loading and analysis."""
+from typing import Dict, Any, List
+from pathlib import Path
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+from .base_agent import BaseAgent
+from ..core.exceptions import TemplateError
+
+class Agent2_TemplateLoader(BaseAgent):
+    """
+    Loads PowerPoint templates and extracts placeholder information.
+    Implements REQ-A2-01: Template structure analysis
+    """
+    
+    def __init__(self):
+        super().__init__("agent2_template_loader")
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Load and analyze PowerPoint template.
+        
+        Args:
+            input_data: {
+                "template_path": str
+            }
+        
+        Returns:
+            {
+                "template_path": str,
+                "slides": List[Dict],
+                "placeholders": List[Dict],
+                "metadata": Dict
+            }
+        """
+        template_path = input_data.get("template_path")
+        if not template_path:
+            raise TemplateError("template_path is required")
+        
+        template_path = Path(template_path)
+        if not template_path.exists():
+            raise TemplateError(f"Template not found: {template_path}")
+        
+        if template_path.suffix.lower() != '.pptx':
+            raise TemplateError(f"Invalid template format. Expected .pptx, got {template_path.suffix}")
+        
+        # Load presentation
+        try:
+            prs = Presentation(str(template_path))
+        except Exception as e:
+            raise TemplateError(f"Failed to load template: {str(e)}")
+        
+        # Analyze structure
+        slides_data = self._analyze_slides(prs)
+        placeholders_data = self._extract_placeholders(prs)
+        
+        return {
+            "template_path": str(template_path),
+            "presentation": prs,  # Store for later use
+            "slides": slides_data,
+            "placeholders": placeholders_data,
+            "metadata": {
+                "slide_count": len(prs.slides),
+                "total_placeholders": len(placeholders_data),
+                "slide_width": prs.slide_width,
+                "slide_height": prs.slide_height
+            }
+        }
+    
+    def _analyze_slides(self, prs: Presentation) -> List[Dict]:
+        """Analyze each slide in the presentation."""
+        slides_data = []
+        
+        for idx, slide in enumerate(prs.slides):
+            slide_info = {
+                "slide_index": idx,
+                "slide_id": slide.slide_id,
+                "layout_name": slide.slide_layout.name if hasattr(slide.slide_layout, 'name') else "Unknown",
+                "shape_count": len(slide.shapes),
+                "has_title": any(shape.has_text_frame and hasattr(shape, 'name') and 'title' in shape.name.lower() for shape in slide.shapes)
+            }
+            slides_data.append(slide_info)
+        
+        return slides_data
+    
+    def _extract_placeholders(self, prs: Presentation) -> List[Dict]:
+        """Extract all placeholders from presentation."""
+        placeholders = []
+        placeholder_id = 0
+        
+        for slide_idx, slide in enumerate(prs.slides):
+            for shape_idx, shape in enumerate(slide.shapes):
+                # Check if shape can hold text
+                if shape.has_text_frame:
+                    placeholder_info = {
+                        "placeholder_id": f"slide_{slide_idx}_shape_{shape_idx}",
+                        "slide_index": slide_idx,
+                        "shape_index": shape_idx,
+                        "shape_name": shape.name,
+                        "shape_type": str(shape.shape_type),
+                        "placeholder_type": "text",
+                        "current_text": shape.text if shape.has_text_frame else "",
+                        "max_chars": self._estimate_max_chars(shape),
+                        "formatting_info": self._extract_formatting(shape)
+                    }
+                    placeholders.append(placeholder_info)
+                    placeholder_id += 1
+                
+                # Check for tables
+                elif shape.shape_type == MSO_SHAPE_TYPE.TABLE:
+                    placeholder_info = {
+                        "placeholder_id": f"slide_{slide_idx}_shape_{shape_idx}",
+                        "slide_index": slide_idx,
+                        "shape_index": shape_idx,
+                        "shape_name": shape.name,
+                        "placeholder_type": "table",
+                        "rows": len(shape.table.rows),
+                        "columns": len(shape.table.columns)
+                    }
+                    placeholders.append(placeholder_info)
+                    placeholder_id += 1
+        
+        return placeholders
+    
+    def _estimate_max_chars(self, shape) -> int:
+        """Estimate maximum characters based on shape dimensions."""
+        if not shape.has_text_frame:
+            return 0
+        
+        # Rough estimation based on dimensions
+        width_chars = shape.width // 70000  # Approximate chars per width unit
+        height_lines = shape.height // 200000  # Approximate lines per height unit
+        
+        return int(width_chars * height_lines * 80)  # ~80 chars per line
+    
+    def _extract_formatting(self, shape) -> Dict:
+        """Extract formatting information from shape."""
+        if not shape.has_text_frame:
+            return {}
+        
+        formatting_info = {
+            "font_name": None,
+            "font_size": None,
+            "bold": False,
+            "italic": False,
+            "alignment": None
+        }
+        
+        try:
+            if shape.text_frame.paragraphs:
+                first_para = shape.text_frame.paragraphs[0]
+                if first_para.runs:
+                    first_run = first_para.runs[0]
+                    formatting_info["font_name"] = first_run.font.name
+                    formatting_info["font_size"] = first_run.font.size
+                    formatting_info["bold"] = first_run.font.bold
+                    formatting_info["italic"] = first_run.font.italic
+                formatting_info["alignment"] = str(first_para.alignment) if first_para.alignment else None
+        except:
+            pass
+        
+        return formatting_info
+```
+
+**Continue to next comment for Phase 2.3-2.6 and remaining phases...**
+
+Would you like me to continue with the complete implementation plan? It will cover:
+- Phase 2.3-2.6: Agents 3-6 (detailed implementations)
+- Phase 3: Integration & Pipeline Orchestration
+- Phase 4: Testing & Validation
+- Phase 5: Traceability Matrix Generation
+- Phase 6: Documentation & Deployment
+
+# Comprehensive Implementation Plan (Continued)
+
+## 🤖 Phase 2: Agent Development (Continued)
+
+### Phase 2.3: Agent 3 - Semantic CV Extractor (Gold Standard)
+
+**File**: `src/agents/agent3_semantic_extractor.py`
+```python
+"""Agent 3: Deep semantic CV extraction with deterministic processing."""
+import json
+import re
+from datetime import datetime
+from typing import Dict, Any, List, Optional, Tuple
+import google.generativeai as genai
+from .base_agent import BaseAgent
+from ..core.schemas import (
+    CVData, PersonalInfo, WorkExperience, Education, Skills,
+    Project, DateStatus, ConfidenceLevel, CV_JSON_SCHEMA
+)
+from ..core.validators import DataValidator
+from ..core.exceptions import ExtractionError, SchemaViolationError
+from ..core.config import config
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+class Agent3_SemanticExtractor(BaseAgent):
+    """
+    Deep Semantic CV Extraction with Deterministic Processing.
+    Implements REQ-A3-01, REQ-A3-02, REQ-SEM-01 through REQ-SEM-04
+    """
+    
+    def __init__(self):
+        super().__init__("agent3_semantic_extractor", temperature=0.0)
+        
+        # Initialize Gemini with deterministic settings
+        api_key = config.api_key
+        genai.configure(api_key=api_key)
+        
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.0,  # Zero-variance mandate (REQ-DET-01)
+                "top_p": 0.1,
+                "top_k": 1,
+                "max_output_tokens": 8192,
+                "response_mime_type": "application/json"
+            }
+        )
+        
+        self.extraction_attempts = []
+        self.semantic_enrichment_log = []
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract CV data with semantic enrichment.
+        
+        Args:
+            input_data: {
+                "text": str,
+                "file_path": str (optional)
+            }
+        
+        Returns:
+            {
+                "cv_data": CVData object,
+                "extraction_metadata": Dict,
+                "semantic_enrichment": Dict
+            }
+        """
+        cv_text = input_data.get("text")
+        if not cv_text:
+            raise ExtractionError("CV text is required")
+        
+        # Multi-stage extraction with retry
+        extracted_data = self._extract_with_retry(cv_text, max_retries=3)
+        
+        # Validate extracted data
+        is_valid, errors = DataValidator.validate_json_schema(extracted_data, CV_JSON_SCHEMA)
+        if not is_valid:
+            raise SchemaViolationError(f"Extracted data violates schema: {errors}")
+        
+        # Apply semantic enrichment
+        enriched_data = self._apply_semantic_enrichment(extracted_data, cv_text)
+        
+        # Convert to structured objects
+        cv_data = self._convert_to_cv_data(enriched_data)
+        
+        # Final validation
+        is_valid, errors = DataValidator.validate_cv_data(cv_data)
+        if not is_valid:
+            raise ExtractionError(f"Final validation failed: {'; '.join(errors)}")
+        
+        return {
+            "cv_data": cv_data,
+            "cv_data_dict": cv_data.to_dict(),
+            "extraction_metadata": {
+                "attempts": len(self.extraction_attempts),
+                "confidence": cv_data.extraction_confidence.value,
+                "timestamp": cv_data.extraction_timestamp
+            },
+            "semantic_enrichment": self.semantic_enrichment_log
+        }
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def _extract_with_retry(self, cv_text: str, max_retries: int = 3) -> Dict[str, Any]:
+        """
+        Extract with progressive retry mechanism (REQ-DET-02).
+        """
+        for attempt in range(max_retries):
+            try:
+                # Build extraction prompt with increasing strictness
+                prompt = self._build_extraction_prompt(cv_text, attempt)
+                
+                # Call Gemini API
+                response = self.model.generate_content(prompt)
+                
+                # Parse JSON response
+                extracted_data = json.loads(response.text)
+                
+                # Log successful attempt
+                self.extraction_attempts.append({
+                    "attempt": attempt + 1,
+                    "status": "success",
+                    "prompt_version": f"v{attempt + 1}",
+                    "data_keys": list(extracted_data.keys())
+                })
+                
+                return extracted_data
+                
+            except (json.JSONDecodeError, KeyError) as e:
+                self.extraction_attempts.append({
+                    "attempt": attempt + 1,
+                    "status": "failed",
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                })
+                
+                if attempt == max_retries - 1:
+                    # Final fallback (REQ-DET-03)
+                    return self._create_fallback_structure(cv_text)
+        
+        return self._create_fallback_structure(cv_text)
+    
+    def _build_extraction_prompt(self, cv_text: str, attempt: int = 0) -> str:
+        """
+        Build extraction prompt with progressive strictness.
+        """
+        strictness_levels = [
+            "STANDARD",
+            "STRICT - Focus on required fields only",
+            "ULTRA-STRICT - Use 'N/A' for any ambiguous data"
+        ]
+        
+        strictness = strictness_levels[min(attempt, len(strictness_levels) - 1)]
+        
+        prompt = f"""
+EXTRACTION LEVEL: {strictness}
+
+CRITICAL INSTRUCTIONS:
+1. Extract CV information into EXACT JSON format following the schema
+2. ALL dates MUST be in YYYY-MM format (e.g., "2023-01", "2020-06")
+3. For current roles: set end_date to null AND is_current to true
+4. Distinguish between employer_industry and client_industries:
+   - employer_industry: The industry of the company the person works for
+   - client_industries: Industries of clients they served (for consultants/advisors)
+5. NO HALLUCINATION - Use "N/A" or null for missing information
+6. Extract ALL responsibilities and projects with full detail
+7. Identify technical skills, tools, and certifications explicitly
+
+JSON SCHEMA REQUIREMENTS:
+{json.dumps(CV_JSON_SCHEMA, indent=2)}
+
+EXTRACTION RULES:
+- personal_info.full_name: REQUIRED - Extract full name
+- personal_info.email: Extract if present, null if not
+- personal_info.phone: Extract if present, null if not
+- personal_info.location: City, State, Country if available
+- personal_info.linkedin: Full LinkedIn URL if present
+
+- work_experience: Array of positions
+  - company_name: REQUIRED - Company name
+  - job_title: REQUIRED - Exact job title
+  - start_date: REQUIRED - Format YYYY-MM
+  - end_date: YYYY-MM or null if current
+  - is_current: REQUIRED - Boolean (true if currently employed here)
+  - employer_industry: Industry of employer (e.g., "Consulting", "Technology", "Finance")
+  - client_industries: Array of industries served (e.g., ["Oil & Gas", "Banking"])
+  - responsibilities: Array of detailed responsibility statements
+  - projects: Array of project objects with name, description, role, technologies
+  - skills_used: Array of technical skills used in this role
+
+- education: Array of degrees
+  - institution: University/school name
+  - degree: Degree type (BS, MS, PhD, etc.)
+  - field: Field of study
+  - graduation_date: YYYY-MM format if available
+
+- skills:
+  - technical: Programming languages, frameworks, tools
+  - soft: Leadership, communication, etc.
+  - languages: Spoken languages
+  - certifications: Professional certifications
+
+CV TEXT TO EXTRACT:
+{cv_text}
+
+OUTPUT ONLY VALID JSON. NO EXPLANATIONS. NO MARKDOWN CODE BLOCKS.
+"""
+        return prompt
+    
+    def _apply_semantic_enrichment(self, data: Dict, original_text: str) -> Dict:
+        """
+        Apply semantic post-processing for temporal and entity relationships.
+        Implements REQ-SEM-01 through REQ-SEM-04
+        """
+        enrichment_log = {
+            "temporal_anchoring": [],
+            "industry_disambiguation": [],
+            "skill_extraction": [],
+            "duration_calculations": []
+        }
+        
+        # Process work experiences
+        for idx, exp in enumerate(data.get("work_experience", [])):
+            
+            # 1. Temporal Anchoring (REQ-SEM-01)
+            temporal_result = self._determine_temporal_status(
+                exp.get("start_date"),
+                exp.get("end_date"),
+                original_text,
+                exp.get("company_name")
+            )
+            exp["is_current"] = temporal_result["is_current"]
+            exp["temporal_confidence"] = temporal_result["confidence"]
+            exp["date_status"] = temporal_result["status"]
+            
+            enrichment_log["temporal_anchoring"].append({
+                "experience_index": idx,
+                "company": exp.get("company_name"),
+                "result": temporal_result
+            })
+            
+            # 2. Calculate duration
+            duration = self._calculate_duration(
+                exp.get("start_date"),
+                exp.get("end_date"),
+                exp.get("is_current")
+            )
+            exp["duration_months"] = duration
+            
+            enrichment_log["duration_calculations"].append({
+                "experience_index": idx,
+                "duration_months": duration
+            })
+            
+            # 3. Industry Disambiguation (REQ-SEM-03)
+            if exp.get("employer_industry", "").lower() in ["consulting", "advisory", "professional services"]:
+                client_industries = self._extract_client_industries(
+                    exp.get("projects", []),
+                    exp.get("responsibilities", []),
+                    original_text
+                )
+                exp["client_industries"] = client_industries
+                
+                enrichment_log["industry_disambiguation"].append({
+                    "experience_index": idx,
+                    "employer_industry": exp.get("employer_industry"),
+                    "client_industries": client_industries
+                })
+            
+            # 4. Skill Extraction Enhancement (REQ-SEM-04)
+            enhanced_skills = self._enhance_skill_extraction(
+                exp.get("skills_used", []),
+                exp.get("responsibilities", []),
+                exp.get("projects", [])
+            )
+            exp["skills_used"] = enhanced_skills
+            
+            enrichment_log["skill_extraction"].append({
+                "experience_index": idx,
+                "skills_count": len(enhanced_skills)
+            })
+        
+        self.semantic_enrichment_log = enrichment_log
+        return data
+    
+    def _determine_temporal_status(self, start_date: str, end_date: Optional[str], 
+                                   context: str, company_name: str) -> Dict[str, Any]:
+        """
+        Deterministic current role detection (REQ-SEM-01).
+        Returns: {is_current, confidence, status, reasoning}
+        """
+        result = {
+            "is_current": False,
+            "confidence": 0.0,
+            "status": "unknown",
+            "reasoning": []
+        }
+        
+        # Check 1: No end date = current
+        if not end_date or end_date is None:
+            result["is_current"] = True
+            result["confidence"] = 0.9
+            result["status"] = "current"
+            result["reasoning"].append("No end date provided")
+            return result
+        
+        # Check 2: Explicit current indicators
+        current_indicators = ["present", "current", "ongoing", "now", "today"]
+        end_date_lower = str(end_date).lower()
+        
+        if any(indicator in end_date_lower for indicator in current_indicators):
+            result["is_current"] = True
+            result["confidence"] = 1.0
+            result["status"] = "current"
+            result["reasoning"].append(f"End date contains current indicator: {end_date}")
+            return result
+        
+        # Check 3: Date is in future
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m")
+            now = datetime.now()
+            
+            if end_dt >= now:
+                result["is_current"] = True
+                result["confidence"] = 0.95
+                result["status"] = "current"
+                result["reasoning"].append(f"End date {end_date} is in future or current month")
+                return result
+            
+            # Check if within last 2 months (might be recently left but still listed)
+            months_diff = (now.year - end_dt.year) * 12 + (now.month - end_dt.month)
+            
+            if months_diff <= 2:
+                # Check context for current indicators near company name
+                context_window = self._extract_context_window(context, company_name, 200)
+                if any(indicator in context_window.lower() for indicator in current_indicators):
+                    result["is_current"] = True
+                    result["confidence"] = 0.8
+                    result["status"] = "current"
+                    result["reasoning"].append("Recent end date with current indicators in context")
+                    return result
+            
+            # Past role
+            result["is_current"] = False
+            result["confidence"] = 0.95
+            result["status"] = "past"
+            result["reasoning"].append(f"End date {end_date} is {months_diff} months ago")
+            return result
+            
+        except ValueError:
+            # Invalid date format - check context
+            result["confidence"] = 0.5
+            result["status"] = "unknown"
+            result["reasoning"].append(f"Invalid date format: {end_date}")
+        
+        return result
+    
+    def _calculate_duration(self, start_date: str, end_date: Optional[str], 
+                           is_current: bool) -> int:
+        """Calculate duration in months."""
+        try:
+            start = datetime.strptime(start_date, "%Y-%m")
+            
+            if is_current or not end_date:
+                end = datetime.now()
+            else:
+                end = datetime.strptime(end_date, "%Y-%m")
+            
+            duration = (end.year - start.year) * 12 + (end.month - start.month)
+            return max(duration, 0)  # Ensure non-negative
+            
+        except:
+            return 0
+    
+    def _extract_client_industries(self, projects: List, responsibilities: List, 
+                                   context: str) -> List[str]:
+        """
+        Extract client industries from project context (REQ-SEM-03).
+        """
+        # Comprehensive industry keyword mapping
+        industry_keywords = {
+            "Banking & Finance": ["bank", "banking", "financial services", "investment", "capital markets"],
+            "Oil & Gas": ["oil", "gas", "petroleum", "energy", "upstream", "downstream"],
+            "Healthcare": ["healthcare", "hospital", "medical", "pharma", "pharmaceutical", "biotech"],
+            "Technology": ["tech", "software", "saas", "cloud", "digital"],
+            "Retail": ["retail", "ecommerce", "consumer goods", "fmcg"],
+            "Telecommunications": ["telecom", "telecommunications", "mobile", "network"],
+            "Automotive": ["automotive", "automobile", "vehicle", "oem"],
+            "Manufacturing": ["manufacturing", "industrial", "production", "factory"],
+            "Insurance": ["insurance", "actuarial", "underwriting", "claims"],
+            "Real Estate": ["real estate", "property", "construction", "development"],
+            "Government": ["government", "public sector", "federal", "municipal"],
+            "Education": ["education", "university", "school", "academic"],
+            "Media & Entertainment": ["media", "entertainment", "broadcasting", "streaming"]
+        }
+        
+        client_industries = set()
+        
+        # Scan projects
+        for project in projects:
+            if isinstance(project, dict):
+                text = f"{project.get('name', '')} {project.get('description', '')}".lower()
+            else:
+                text = str(project).lower()
+            
+            for industry, keywords in industry_keywords.items():
+                if any(keyword in text for keyword in keywords):
+                    client_industries.add(industry)
+        
+        # Scan responsibilities
+        for resp in responsibilities:
+            text = str(resp).lower()
+            for industry, keywords in industry_keywords.items():
+                if any(keyword in text for keyword in keywords):
+                    client_industries.add(industry)
+        
+        return sorted(list(client_industries))
+    
+    def _enhance_skill_extraction(self, existing_skills: List[str], 
+                                  responsibilities: List, projects: List) -> List[str]:
+        """
+        Enhanced skill extraction from context (REQ-SEM-04).
+        """
+        # Technical skill patterns
+        skill_patterns = {
+            "Programming Languages": r'\b(Python|Java|JavaScript|C\+\+|C#|Ruby|Go|Rust|Swift|Kotlin|TypeScript|R|MATLAB|Scala)\b',
+            "Frameworks": r'\b(React|Angular|Vue|Django|Flask|Spring|Node\.js|Express|FastAPI|Rails|Laravel|\.NET)\b',
+            "Databases": r'\b(SQL|MySQL|PostgreSQL|MongoDB|Redis|Cassandra|Oracle|DynamoDB|Elasticsearch)\b',
+            "Cloud": r'\b(AWS|Azure|GCP|Google Cloud|Kubernetes|Docker|Terraform|CloudFormation)\b',
+            "Tools": r'\b(Git|Jenkins|CircleCI|Jira|Confluence|Tableau|Power BI|Excel|SAP)\b',
+            "ML/AI": r'\b(Machine Learning|Deep Learning|NLP|Computer Vision|TensorFlow|PyTorch|Scikit-learn)\b'
+        }
+        
+        skills = set(existing_skills)
+        
+        # Combine all text
+        all_text = ' '.join([str(r) for r in responsibilities] + 
+                           [str(p) for p in projects])
+        
+        # Extract skills using patterns
+        for category, pattern in skill_patterns.items():
+            matches = re.findall(pattern, all_text, re.IGNORECASE)
+            skills.update(matches)
+        
+        return sorted(list(skills))
+    
+    def _extract_context_window(self, text: str, anchor: str, window_size: int) -> str:
+        """Extract text window around anchor text."""
+        try:
+            pos = text.lower().find(anchor.lower())
+            if pos == -1:
+                return ""
+            
+            start = max(0, pos - window_size)
+            end = min(len(text), pos + len(anchor) + window_size)
+            
+            return text[start:end]
+        except:
+            return ""
+    
+    def _convert_to_cv_data(self, data: Dict) -> CVData:
+        """Convert dictionary to CVData object."""
+        
+        # Personal info
+        personal_info = PersonalInfo(**data.get("personal_info", {"full_name": "N/A"}))
+        
+        # Work experience
+        work_experience = []
+        for exp_data in data.get("work_experience", []):
+            # Convert projects
+            projects = []
+            for proj_data in exp_data.get("projects", []):
+                if isinstance(proj_data, dict):
+                    projects.append(Project(
+                        name=proj_data.get("name", ""),
+                        description=proj_data.get("description", ""),
+                        role=proj_data.get("role", ""),
+                        technologies=proj_data.get("technologies", []),
+                        outcomes=proj_data.get("outcomes", []),
+                        client_industry=proj_data.get("client_industry")
+                    ))
+            
+            exp = WorkExperience(
+                company_name=exp_data.get("company_name", ""),
+                job_title=exp_data.get("job_title", ""),
+                start_date=exp_data.get("start_date", ""),
+                end_date=exp_data.get("end_date"),
+                is_current=exp_data.get("is_current", False),
+                employer_industry=exp_data.get("employer_industry", ""),
+                client_industries=exp_data.get("client_industries", []),
+                responsibilities=exp_data.get("responsibilities", []),
+                projects=projects,
+                skills_used=exp_data.get("skills_used", []),
+                temporal_confidence=exp_data.get("temporal_confidence", 1.0),
+                date_status=DateStatus(exp_data.get("date_status", "unknown")),
+                duration_months=exp_data.get("duration_months")
+            )
+            work_experience.append(exp)
+        
+        # Education
+        education = [Education(**edu) for edu in data.get("education", [])]
+        
+        # Skills
+        skills_data = data.get("skills", {})
+        skills = Skills(
+            technical=skills_data.get("technical", []),
+            soft=skills_data.get("soft", []),
+            languages=skills_data.get("languages", []),
+            certifications=skills_data.get("certifications", []),
+            tools=skills_data.get("tools", [])
+        )
+        
+        return CVData(
+            personal_info=personal_info,
+            work_experience=work_experience,
+            education=education,
+            skills=skills,
+            extraction_confidence=ConfidenceLevel.HIGH
+        )
+    
+    def _create_fallback_structure(self, cv_text: str) -> Dict:
+        """
+        Deterministic fallback with "N/A" values (REQ-DET-03).
+        """
+        # Attempt basic regex extraction as fallback
+        name = self._extract_name_fallback(cv_text)
+        email = self._extract_email_fallback(cv_text)
+        
+        return {
+            "personal_info": {
+                "full_name": name or "N/A",
+                "email": email,
+                "phone": None,
+                "location": None,
+                "linkedin": None
+            },
+            "work_experience": [],
+            "education": [],
+            "skills": {
+                "technical": [],
+                "soft": [],
+                "languages": [],
+                "certifications": [],
+                "tools": []
+            },
+            "extraction_metadata": {
+                "status": "fallback",
+                "reason": "Failed JSON extraction after retries",
+                "raw_text_length": len(cv_text),
+                "fallback_method": "regex"
+            }
+        }
+    
+    def _extract_name_fallback(self, text: str) -> Optional[str]:
+        """Fallback name extraction using regex."""
+        # Look for name at the beginning of CV
+        lines = text.strip().split('\n')
+        for line in lines[:5]:
+            # Pattern for name: 2-3 capitalized words
+            match = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\b', line)
+            if match:
+                return match.group(1)
+        return None
+    
+    def _extract_email_fallback(self, text: str) -> Optional[str]:
+        """Fallback email extraction using regex."""
+        pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
+        match = re.search(pattern, text)
+        return match.group(0) if match else None
+```
+
+### Phase 2.4: Agent 4 - Mapping Engine
+
+**File**: `src/agents/agent4_mapping_engine.py`
+```python
+"""Agent 4: CV-to-Template intelligent mapping."""
+import json
+from typing import Dict, Any, List, Optional
+import google.generativeai as genai
+from .base_agent import BaseAgent
+from ..core.schemas import CVData, PlaceholderMapping
+from ..core.exceptions import MappingError
+from ..core.config import config
+
+class Agent4_MappingEngine(BaseAgent):
+    """
+    Intelligent mapping between CV data and PowerPoint placeholders.
+    Implements REQ-A4-01: Context-aware mapping
+    """
+    
+    def __init__(self):
+        super().__init__("agent4_mapping_engine", temperature=0.0)
+        
+        api_key = config.api_key
+        genai.configure(api_key=api_key)
+        
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.0,
+                "top_p": 0.1,
+                "top_k": 1,
+                "response_mime_type": "application/json"
+            }
+        )
+        
+        self.mapping_log = []
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create intelligent mappings between CV and template.
+        
+        Args:
+            input_data: {
+                "cv_data": CVData object or dict,
+                "placeholders": List of placeholder dicts,
+                "mapping_strategy": str (optional)
+            }
+        
+        Returns:
+            {
+                "mappings": List[PlaceholderMapping],
+                "mapping_metadata": Dict,
+                "unmapped_placeholders": List,
+                "unmapped_cv_fields": List
+            }
+        """
+        cv_data = input_data.get("cv_data")
+        placeholders = input_data.get("placeholders")
+        
+        if not cv_data or not placeholders:
+            raise MappingError("Both cv_data and placeholders are required")
+        
+        # Convert cv_data to dict if it's an object
+        if isinstance(cv_data, CVData):
+            cv_data_dict = cv_data.to_dict()
+        else:
+            cv_data_dict = cv_data
+        
+        # Generate mappings using AI
+        mappings = self._generate_mappings(cv_data_dict, placeholders)
+        
+        # Validate mappings
+        validated_mappings = self._validate_mappings(mappings, cv_data_dict, placeholders)
+        
+        # Identify unmapped items
+        unmapped_placeholders = self._find_unmapped_placeholders(validated_mappings, placeholders)
+        unmapped_cv_fields = self._find_unmapped_cv_fields(validated_mappings, cv_data_dict)
+        
+        return {
+            "mappings": validated_mappings,
+            "mapping_metadata": {
+                "total_placeholders": len(placeholders),
+                "mapped_placeholders": len(validated_mappings),
+                "mapping_coverage": len(validated_mappings) / len(placeholders) if placeholders else 0
+            },
+            "unmapped_placeholders": unmapped_placeholders,
+            "unmapped_cv_fields": unmapped_cv_fields
+        }
+    
+    def _generate_mappings(self, cv_data: Dict, placeholders: List[Dict]) -> List[Dict]:
+        """Generate mappings using AI."""
+        
+        # Create simplified CV summary for mapping
+        cv_summary = self._create_cv_summary(cv_data)
+        
+        # Create placeholder summary
+        placeholder_summary = []
+        for ph in placeholders:
+            placeholder_summary.append({
+                "id": ph["placeholder_id"],
+                "type": ph["placeholder_type"],
+                "context": ph.get("current_text", "")[:100],
+                "slide": ph["slide_index"]
+            })
+        
+        prompt = f"""
+TASK: Create mappings between CV data fields and PowerPoint placeholders.
+
+CV DATA FIELDS:
+{json.dumps(cv_summary, indent=2)}
+
+PLACEHOLDERS:
+{json.dumps(placeholder_summary, indent=2)}
+
+MAPPING RULES:
+1. Match placeholder context to CV data semantically
+2. Prioritize current/recent work experience for prominent placeholders
+3. Map education to education-related placeholders
+4. Map skills to skills/expertise placeholders
+5. Consider slide order - earlier slides should have more important info
+
+OUTPUT FORMAT (JSON array):
+[
+  {{
+    "placeholder_id": "slide_0_shape_1",
+    "source_field": "personal_info.full_name",
+    "confidence": 0.95,
+    "reasoning": "Placeholder labeled 'Name' matches personal name field"
+  }},
+  ...
+]
+
+OUTPUT ONLY THE JSON ARRAY. NO EXPLANATIONS.
+"""
+        
+        response = self.model.generate_content(prompt)
+        
+        try:
+            mappings = json.loads(response.text)
+            return mappings
+        except json.JSONDecodeError:
+            # Fallback to rule-based mapping
+            return self._rule_based_mapping(cv_data, placeholders)
+    
+    def _create_cv_summary(self, cv_data: Dict) -> Dict:
+        """Create a simplified summary of CV data for mapping."""
+        summary = {
+            "personal_info": {
+                "full_name": cv_data.get("personal_info", {}).get("full_name"),
+                "email": cv_data.get("personal_info", {}).get("email"),
+                "location": cv_data.get("personal_info", {}).get("location")
+            },
+            "work_experience": []
+        }
+        
+        # Summarize work experience
+        for idx, exp in enumerate(cv_data.get("work_experience", [])[:3]):  # Top 3 roles
+            summary["work_experience"].append({
+                "index": idx,
+                "company": exp.get("company_name"),
+                "title": exp.get("job_title"),
+                "is_current": exp.get("is_current"),
+                "duration_months": exp.get("duration_months"),
+                "responsibilities_count": len(exp.get("responsibilities", []))
+            })
+        
+        # Summarize education
+        summary["education"] = [
+            {
+                "institution": edu.get("institution"),
+                "degree": edu.get("degree")
+            }
+            for edu in cv_data.get("education", [])[:2]
+        ]
+        
+        # Summarize skills
+        skills = cv_data.get("skills", {})
+        summary["skills"] = {
+            "technical_count": len(skills.get("technical", [])),
+            "certifications_count": len(skills.get("certifications", []))
+        }
+        
+        return summary
+    
+    def _rule_based_mapping(self, cv_data: Dict, placeholders: List[Dict]) -> List[Dict]:
+        """Fallback rule-based mapping."""
+        mappings = []
+        
+        # Rule 1: Map name to first text placeholder on first slide
+        name_placeholder = next(
+            (ph for ph in placeholders 
+             if ph["slide_index"] == 0 and ph["placeholder_type"] == "text"),
+            None
+        )
+        if name_placeholder:
+            mappings.append({
+                "placeholder_id": name_placeholder["placeholder_id"],
+                "source_field": "personal_info.full_name",
+                "confidence": 0.8,
+                "reasoning": "Rule-based: First text placeholder on first slide"
+            })
+        
+        # Rule 2: Map current job to second text placeholder
+        work_exp = cv_data.get("work_experience", [])
+        if work_exp:
+            current_role = next((exp for exp in work_exp if exp.get("is_current")), work_exp[0])
+            
+            job_placeholder = next(
+                (ph for ph in placeholders 
+                 if ph["slide_index"] <= 1 and ph["placeholder_type"] == "text" 
+                 and ph["placeholder_id"] != name_placeholder.get("placeholder_id")),
+                None
+            )
+            if job_placeholder:
+                mappings.append({
+                    "placeholder_id": job_placeholder["placeholder_id"],
+                    "source_field": f"work_experience.0.job_title",
+                    "confidence": 0.7,
+                    "reasoning": "Rule-based: Current/recent job title"
+                })
+        
+        return mappings
+    
+    def _validate_mappings(self, mappings: List[Dict], cv_data: Dict, 
+                          placeholders: List[Dict]) -> List[Dict]:
+        """Validate and clean mappings."""
+        validated = []
+        
+        for mapping in mappings:
+            # Check if placeholder exists
+            ph_exists = any(ph["placeholder_id"] == mapping["placeholder_id"] 
+                          for ph in placeholders)
+            if not ph_exists:
+                continue
+            
+            # Check if source field exists in CV data
+            field_exists = self._check_field_exists(cv_data, mapping["source_field"])
+            if not field_exists:
+                continue
+            
+            validated.append(mapping)
+        
+        return validated
+    
+    def _check_field_exists(self, data: Dict, field_path: str) -> bool:
+        """Check if a field path exists in nested dict."""
+        parts = field_path.split('.')
+        current = data
+        
+        for part in parts:
+            # Handle array indices
+            if '[' in part and ']' in part:
+                key = part.split('[')[0]
+                index = int(part.split('[')[1].split(']')[0])
+                if key not in current or not isinstance(current[key], list):
+                    return False
+                if index >= len(current[key]):
+                    return False
+                current = current[key][index]
+            else:
+                if part not in current:
+                    return False
+                current = current[part]
+        
+        return True
+    
+    def _find_unmapped_placeholders(self, mappings: List[Dict], 
+                                   placeholders: List[Dict]) -> List[Dict]:
+        """Find placeholders that weren't mapped."""
+        mapped_ids = {m["placeholder_id"] for m in mappings}
+        return [ph for ph in placeholders if ph["placeholder_id"] not in mapped_ids]
+    
+    def _find_unmapped_cv_fields(self, mappings: List[Dict], cv_data: Dict) -> List[str]:
+        """Find CV fields that weren't mapped to any placeholder."""
+        mapped_fields = {m["source_field"] for m in mappings}
+        
+        # Generate all available fields
+        all_fields = []
+        all_fields.append("personal_info.full_name")
+        all_fields.append("personal_info.email")
+        
+        work_exp = cv_data.get("work_experience", [])
+        for idx in range(len(work_exp)):
+            all_fields.append(f"work_experience.{idx}.company_name")
+            all_fields.append(f"work_experience.{idx}.job_title")
+        
+        unmapped = [f for f in all_fields if f not in mapped_fields]
+        return unmapped
+```
+
+### Phase 2.5: Agent 5 - Placeholder Analyzer
+
+**File**: `src/agents/agent5_placeholder_analyzer.py`
+```python
+"""Agent 5: Placeholder analysis and transformation rule generation."""
+import json
+from typing import Dict, Any, List
+import google.generativeai as genai
+from .base_agent import BaseAgent
+from ..core.exceptions import MappingError
+from ..core.config import config
+
+class Agent5_PlaceholderAnalyzer(BaseAgent):
+    """
+    Analyzes placeholders and generates transformation rules.
+    Implements REQ-A5-01: Context-aware rule generation
+    """
+    
+    def __init__(self):
+        super().__init__("agent5_placeholder_analyzer", temperature=0.0)
+        
+        api_key = config.api_key
+        genai.configure(api_key=api_key)
+        
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.0,
+                "top_p": 0.1,
+                "top_k": 1,
+                "response_mime_type": "application/json"
+            }
+        )
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze placeholders and generate transformation rules.
+        
+        Args:
+            input_data: {
+                "mappings": List of mapping dicts,
+                "placeholders": List of placeholder dicts,
+                "cv_data": Dict of CV data
+            }
+        
+        Returns:
+            {
+                "transformation_rules": Dict[placeholder_id, rules],
+                "analysis_metadata": Dict
+            }
+        """
+        mappings = input_data.get("mappings", [])
+        placeholders = input_data.get("placeholders", [])
+        cv_data = input_data.get("cv_data", {})
+        
+        if not mappings:
+            raise MappingError("No mappings provided")
+        
+        # Generate transformation rules for each mapping
+        transformation_rules = {}
+        
+        for mapping in mappings:
+            placeholder_id = mapping["placeholder_id"]
+            
+            # Find placeholder details
+            placeholder = next(
+                (ph for ph in placeholders if ph["placeholder_id"] == placeholder_id),
+                None
+            )
+            
+            if not placeholder:
+                continue
+            
+            # Generate rules
+            rules = self._generate_rules_for_placeholder(
+                mapping,
+                placeholder,
+                cv_data
+            )
+            
+            transformation_rules[placeholder_id] = rules
+        
+        return {
+            "transformation_rules": transformation_rules,
+            "analysis_metadata": {
+                "total_rules": len(transformation_rules),
+                "avg_max_chars": sum(r.get("max_chars", 0) for r in transformation_rules.values()) / len(transformation_rules) if transformation_rules else 0
+            }
+        }
+    
+    def _generate_rules_for_placeholder(self, mapping: Dict, placeholder: Dict, 
+                                       cv_data: Dict) -> Dict:
+        """Generate transformation rules for a specific placeholder."""
+        
+        # Base rules from placeholder properties
+        rules = {
+            "placeholder_id": placeholder["placeholder_id"],
+            "source_field": mapping["source_field"],
+            "max_chars": placeholder.get("max_chars", 500),
+            "tone": "professional",
+            "formatting": {
+                "bold_company": False,
+                "italic_dates": False,
+                "bullet_points": False
+            },
+            "transformation_type": "direct"  # direct, summarize, reformat, expand
+        }
+        
+        # Analyze placeholder context to determine rules
+        context = placeholder.get("current_text", "").lower()
+        shape_name = placeholder.get("shape_name", "").lower()
+        
+        # Rule 1: Detect if it should be bullet points
+        if any(keyword in context or keyword in shape_name 
+               for keyword in ["bullet", "list", "responsibilities", "achievements"]):
+            rules["formatting"]["bullet_points"] = True
+            rules["transformation_type"] = "bullet_list"
+        
+        # Rule 2: Detect if company names should be bold
+        if any(keyword in context or keyword in shape_name 
+               for keyword in ["experience", "company", "employer"]):
+            rules["formatting"]["bold_company"] = True
+        
+        # Rule 3: Detect if dates should be italic
+        if any(keyword in context or keyword in shape_name 
+               for keyword in ["date", "when", "period", "duration"]):
+            rules["formatting"]["italic_dates"] = True
+        
+        # Rule 4: Determine if summarization is needed
+        source_data = self._get_source_data(cv_data, mapping["source_field"])
+        if source_data and isinstance(source_data, (list, str)):
+            source_length = len(str(source_data))
+            if source_length > rules["max_chars"] * 2:
+                rules["transformation_type"] = "summarize"
+        
+        # Rule 5: Tone adjustment based on placeholder position
+        slide_index = placeholder.get("slide_index", 0)
+        if slide_index == 0:
+            rules["tone"] = "formal"  # First slide more formal
+        elif slide_index >= 5:
+            rules["tone"] = "concise"  # Later slides more concise
+        
+        # Rule 6: Active voice for responsibility sections
+        if "responsibilities" in mapping["source_field"]:
+            rules["tone"] = "active"
+            rules["voice_conversion"] = True
+        
+        return rules
+    
+    def _get_source_data(self, cv_data: Dict, field_path: str) -> Any:
+        """Extract data from CV dict using field path."""
+        parts = field_path.split('.')
+        current = cv_data
+        
+        try:
+            for part in parts:
+                if '[' in part and ']' in part:
+                    key = part.split('[')[0]
+                    index = int(part.split('[')[1].split(']')[0])
+                    current = current[key][index]
+                else:
+                    current = current[part]
+            return current
+        except (KeyError, IndexError, TypeError):
+            return None
+```
+
+### Phase 2.6: Agent 6 - Content Transformer (Gold Standard)
+
+**File**: `src/agents/agent6_content_transformer.py`
+```python
+"""Agent 6: Deterministic content transformation with hard limits."""
+import re
+import json
+from typing import Dict, Any, List, Tuple
+import google.generativeai as genai
+from .base_agent import BaseAgent
+from ..core.schemas import TransformationResult
+from ..core.validators import ContentValidator
+from ..core.exceptions import TransformationError
+from ..core.config import config
+from datetime import datetime
+
+class Agent6_ContentTransformer(BaseAgent):
+    """
+    Content Transformation with Hard Limits and Mixed Formatting.
+    Implements REQ-A6-01, REQ-A6-02, REQ-CON-01, REQ-CON-02
+    """
+    
+    def __init__(self):
+        super().__init__("agent6_content_transformer", temperature=0.0)
+        
+        api_key = config.api_key
+        genai.configure(api_key=api_key)
+        
+        self.model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config={
+                "temperature": 0.0,  # Deterministic (REQ-DET-01)
+                "top_p": 0.1,
+                "top_k": 1
+            }
+        )
+        
+        self.transformation_log = []
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Transform content according to rules.
+        
+        Args:
+            input_data: {
+                "content_mappings": List[Dict] with source_text and rules,
+                "cv_data": Dict of CV data
+            }
+        
+        Returns:
+            {
+                "transformed_content": List[TransformationResult],
+                "traceability_matrix": List[Dict]
+            }
+        """
+        content_mappings = input_data.get("content_mappings", [])
+        cv_data = input_data.get("cv_data", {})
+        
+        if not content_mappings:
+            raise TransformationError("No content mappings provided")
+        
+        transformed_results = []
+        
+        for mapping in content_mappings:
+            # Extract source content
+            source_field = mapping.get("source_field")
+            source_text = self._extract_source_text(cv_data, source_field)
+            
+            if not source_text:
+                continue
+            
+            # Apply transformation
+            result = self.transform_content(
+                source_text=str(source_text),
+                rules=mapping.get("rules", {}),
+                placeholder_id=mapping.get("placeholder_id", "unknown")
+            )
+            
+            transformed_results.append(result)
+        
+        # Generate traceability matrix
+        traceability = self.generate_traceability_matrix()
+        
+        return {
+            "transformed_content": [r.to_dict() for r in transformed_results],
+            "traceability_matrix": traceability,
+            "transformation_summary": {
+                "total_transformations": len(transformed_results),
+                "full_compliance": sum(1 for r in transformed_results if r.compliance_status == "full"),
+                "partial_compliance": sum(1 for r in transformed_results if r.compliance_status == "partial")
+            }
+        }
+    
+    def transform_content(self, source_text: str, rules: Dict[str, Any], 
+                         placeholder_id: str) -> TransformationResult:
+        """
+        Apply transformation rules with strict enforcement (REQ-A6-01).
+        """
+        result = TransformationResult(
+            placeholder_id=placeholder_id,
+            original_text=source_text,
+            transformed_text="",
+            rules_applied=rules,
+            compliance_status="full",
+            transformations=[],
+            metadata={
+                "timestamp": datetime.now().isoformat(),
+                "original_length": len(source_text)
+            }
+        )
+        
+        transformed_text = source_text
+        
+        # Step 1: Apply tone/voice transformations (REQ-CON-02)
+        if rules.get("tone") == "active" or rules.get("voice_conversion"):
+            transformed_text = self._convert_to_active_voice(transformed_text)
+            result.transformations.append({
+                "type": "tone",
+                "action": "convert_to_active_voice",
+                "before_length": len(source_text),
+                "after_length": len(transformed_text)
+            })
+        
+        # Step 2: Apply transformation type
+        transformation_type = rules.get("transformation_type", "direct")
+        
+        if transformation_type == "bullet_list":
+            transformed_text = self._convert_to_bullet_list(transformed_text)
+            result.transformations.append({
+                "type": "format",
+                "action": "convert_to_bullet_list"
+            })
+        
+        elif transformation_type == "summarize":
+            max_chars = rules.get("max_chars", 500)
+            transformed_text = self._summarize_text(transformed_text, max_chars)
+            result.transformations.append({
+                "type": "summarize",
+                "action": "ai_summarization",
+                "target_length": max_chars
+            })
+        
+        # Step 3: Apply hard character limit (REQ-A6-01)
+        max_chars = rules.get("max_chars")
+        if max_chars:
+            transformed_text, was_truncated = self._enforce_hard_limit(
+                transformed_text,
+                max_chars
+            )
+            
+            if was_truncated:
+                result.compliance_status = "partial"
+                result.transformations.append({
+                    "type": "truncation",
+                    "action": "hard_limit_enforcement",
+                    "original_length": len(source_text),
+                    "final_length": len(transformed_text),
+                    "max_chars": max_chars,
+                    "truncated": True
+                })
+        
+        # Step 4: Apply formatting (REQ-CON-01, REQ-A6-02)
+        formatted_text = self._apply_mixed_formatting(
+            transformed_text,
+            rules.get("formatting", {})
+        )
+        
+        if formatted_text != transformed_text:
+            result.transformations.append({
+                "type": "formatting",
+                "action": "apply_markdown",
+                "formats": rules.get("formatting", {})
+            })
+        
+        transformed_text = formatted_text
+        
+        # Final validation
+        is_compliant, actual_length = ContentValidator.validate_character_limit(
+            transformed_text,
+            max_chars or 10000
+        )
+        
+        if not is_compliant:
+            result.compliance_status = "failed"
+        
+        result.transformed_text = transformed_text
+        result.metadata["final_length"] = len(transformed_text)
+        result.metadata["transformations_count"] = len(result.transformations)
+        
+        # Log transformation
+        self.transformation_log.append(result)
+        
+        return result
+    
+    def _convert_to_active_voice(self, text: str) -> str:
+        """
+        Convert passive voice to active voice deterministically (REQ-CON-02).
+        """
+        # First try AI conversion
+        prompt = f"""
+Convert ALL passive voice sentences to active voice. Keep facts and meaning exact.
+
+RULES:
+- "Was led by me" → "Led"
+- "Projects were managed" → "Managed projects"
+- "Was responsible for" → "Responsible for" or "Led"
+- Remove wordiness
+- Keep all technical terms
+- Maintain bullet point format if present
+
+TEXT:
+{text}
+
+OUTPUT ONLY THE CONVERTED TEXT. NO EXPLANATIONS. NO MARKDOWN CODE BLOCKS.
+"""
+        
+        try:
+            response = self.model.generate_content(prompt)
+            converted = response.text.strip()
+            
+            # Validate conversion didn't change meaning significantly
+            if len(converted) > len(text) * 1.5:
+                # If significantly longer, use rule-based fallback
+                return self._rule_based_active_voice(text)
+            
+            return converted
+        except:
+            return self._rule_based_active_voice(text)
+    
+    def _rule_based_active_voice(self, text: str) -> str:
+        """Rule-based passive to active voice conversion."""
+        # Common passive patterns
+        replacements = [
+            (r'\bwas led by\b', 'led'),
+            (r'\bwere led by\b', 'led'),
+            (r'\bwas managed by\b', 'managed'),
+            (r'\bwere managed by\b', 'managed'),
+            (r'\bwas responsible for\b', 'led'),
+            (r'\bwere responsible for\b', 'led'),
+            (r'\bwas developed by\b', 'developed'),
+            (r'\bwere developed by\b', 'developed'),
+        ]
+        
+        result = text
+        for pattern, replacement in replacements:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        
+        return result
+    
+    def _convert_to_bullet_list(self, text: str) -> str:
+        """Convert text to bullet point format."""
+        # Split by common delimiters
+        sentences = re.split(r'[.;]\s+', text)
+        
+        # Filter empty and very short sentences
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
+        
+        if len(sentences) <= 1:
+            return text  # Don't convert single items
+        
+        # Create bullet list
+        bullets = [f"• {s.strip()}" for s in sentences]
+        return '\n'.join(bullets)
+    
+    def _summarize_text(self, text: str, target_length: int) -> str:
+        """
+        Iteratively summarize until target length is met.
+        """
+        if len(text) <= target_length:
+            return text
+        
+        prompt = f"""
+Summarize this text to MAXIMUM {target_length} characters.
+Preserve key facts, achievements, and technical details.
+Be concise but complete.
+
+TEXT:
+{text}
+
+OUTPUT ONLY THE SUMMARY. NO EXPLANATIONS. NO MARKDOWN CODE BLOCKS.
+"""
+        
+        try:
+            response = self.model.generate_content(prompt)
+            summary = response.text.strip()
+            
+            # If still too long, truncate smartly
+            if len(summary) > target_length:
+                summary, _ = self._enforce_hard_limit(summary, target_length)
+            
+            return summary
+        except:
+            # Fallback to truncation
+            truncated, _ = self._enforce_hard_limit(text, target_length)
+            return truncated
+    
+    def _enforce_hard_limit(self, text: str, max_chars: int) -> Tuple[str, bool]:
+        """
+        Enforce character limit with smart truncation (REQ-A6-01).
+        Returns: (truncated_text, was_truncated)
+        """
+        if len(text) <= max_chars:
+            return text, False
+        
+        # Strategy 1: If bullets, remove last bullets until fits
+        if '•' in text or '\n-' in text:
+            lines = text.split('\n')
+            while len('\n'.join(lines)) > max_chars and len(lines) > 1:
+                lines.pop()
+            if len('\n'.join(lines)) <= max_chars:
+                return '\n'.join(lines), True
+        
+        # Strategy 2: Truncate at sentence boundary
+        truncated = text[:max_chars]
+        
+        # Find last sentence ending
+        last_period = truncated.rfind('.')
+        last_semicolon = truncated.rfind(';')
+        last_newline = truncated.rfind('\n')
+        
+        cut_point = max(last_period, last_semicolon, last_newline)
+        
+        # Only use sentence boundary if we're not losing too much
+        if cut_point > max_chars * 0.75:
+            return truncated[:cut_point + 1], True
+        
+        # Strategy 3: Truncate at word boundary
+        last_space = truncated.rfind(' ')
+        if last_space > max_chars * 0.9:
+            return truncated[:last_space] + "...", True
+        
+        # Final fallback: Hard truncate
+        return truncated[:max_chars - 3] + "...", True
+    
+    def _apply_mixed_formatting(self, text: str, formatting_rules: Dict) -> str:
+        """
+        Apply consistent formatting with markdown (REQ-CON-01, REQ-A6-02).
+        """
+        result = text
+        
+        # Apply bold to company names
+        if formatting_rules.get("bold_company"):
+            result = self._bold_company_names(result)
+        
+        # Apply italic to dates
+        if formatting_rules.get("italic_dates"):
+            result = self._italicize_dates(result)
+        
+        # Ensure bullet points are consistent
+        if formatting_rules.get("bullet_points"):
+            result = self._normalize_bullet_points(result)
+        
+        return result
+    
+    def _bold_company_names(self, text: str) -> str:
+        """Apply bold formatting to company names."""
+        # Pattern for company names (simplified)
+        patterns = [
+            r'\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*(?:\s+(?:Inc|Corp|LLC|Ltd|Group|Company)))\b',
+            r'\b(McKinsey|Deloitte|PwC|EY|KPMG|Accenture|BCG|Bain)\b'
+        ]
+        
+        result = text
+        for pattern in patterns:
+            # Only bold if not already bold
+            result = re.sub(
+                pattern,
+                lambda m: f"**{m.group(1)}**" if not text[max(0, m.start()-2):m.start()] == '**' else m.group(1),
+                result
+            )
+        
+        return result
+    
+    def _italicize_dates(self, text: str) -> str:
+        """Italicize all date patterns."""
+        date_patterns = [
+            r'\b(\d{4}[-/]\d{2})\b',  # YYYY-MM
+            r'\b(\d{1,2}[-/]\d{4})\b',  # MM-YYYY
+            r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}\b',  # Month Year
+            r'\b\d{4}\s*[-–]\s*(?:\d{4}|Present|Current)\b'  # Year ranges
+        ]
+        
+        result = text
+        for pattern in date_patterns:
+            # Only italicize if not already italicized
+            result = re.sub(
+                pattern,
+                lambda m: f"*{m.group(0)}*" if not text[max(0, m.start()-1):m.start()] == '*' else m.group(0),
+                result,
+                flags=re.IGNORECASE
+            )
+        
+        return result
+    
+    def _normalize_bullet_points(self, text: str) -> str:
+        """Normalize bullet point formatting."""
+        # Convert various bullet styles to consistent format
+        lines = text.split('\n')
+        normalized = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                normalized.append('')
+                continue
+            
+            # Remove existing bullets
+            stripped = re.sub(r'^[-*•◦▪▫]\s*', '', stripped)
+            
+            # Add consistent bullet if line has content
+            if stripped:
+                normalized.append(f"• {stripped}")
+            else:
+                normalized.append('')
+        
+        return '\n'.join(normalized)
+    
+    def _extract_source_text(self, cv_data: Dict, field_path: str) -> Any:
+        """Extract text from CV data using field path."""
+        parts = field_path.split('.')
+        current = cv_data
+        
+        try:
+            for part in parts:
+                if '[' in part and ']' in part:
+                    key = part.split('[')[0]
+                    index = int(part.split('[')[1].split(']')[0])
+                    current = current[key][index]
+                else:
+                    current = current[part]
+            return current
+        except (KeyError, IndexError, TypeError):
+            return None
+    
+    def generate_traceability_matrix(self) -> List[Dict]:
+        """
+        Generate complete traceability matrix (REQ-EXP-01, REQ-EXP-02).
+        """
+        matrix = []
+        
+        for transformation in self.transformation_log:
+            entry = {
+                "placeholder_id": transformation.placeholder_id,
+                "source_text_preview": transformation.original_text[:100] + "..." 
+                    if len(transformation.original_text) > 100 
+                    else transformation.original_text,
+                "transformed_text_preview": transformation.transformed_text[:100] + "..." 
+                    if len(transformation.transformed_text) > 100 
+                    else transformation.transformed_text,
+                "rules_applied": transformation.rules_applied,
+                "transformations": transformation.transformations,
+                "compliance_status": transformation.compliance_status,
+                "original_length": transformation.metadata.get("original_length", 0),
+                "final_length": transformation.metadata.get("final_length", 0),
+                "timestamp": transformation.metadata.get("timestamp")
+            }
+            matrix.append(entry)
+        
+        return matrix
+```
+
+**Validation Criteria for Phase 2:**
+- ✅ All 6 agents implemented with full inheritance from BaseAgent
+- ✅ Deterministic processing (temperature=0.0) enforced
+- ✅ Semantic enrichment working (temporal, industry, skills)
+- ✅ Hard limit enforcement with multi-stage truncation
+- ✅ Formatting with markdown support
+- ✅ Complete logging and traceability
+
+---
+
+## 🔗 Phase 3: Integration & Pipeline Orchestration
+
+### Phase 3.1: Pipeline Orchestrator
+
+**File**: `src/pipeline/orchestrator.py`
+```python
+"""Pipeline orchestrator for end-to-end CV automation."""
+from typing import Dict, Any, List, Optional
+from pathlib import Path
+import json
+from datetime import datetime
+
+from ..agents.agent1_input_validator import Agent1_InputValidator
+from ..agents.agent2_template_loader import Agent2_TemplateLoader
+from ..agents.agent3_semantic_extractor import Agent3_SemanticExtractor
+from ..agents.agent4_mapping_engine import Agent4_MappingEngine
+from ..agents.agent5_placeholder_analyzer import Agent5_PlaceholderAnalyzer
+from ..agents.agent6_content_transformer import Agent6_ContentTransformer
+from ..core.exceptions import CVAutomationError
+from ..utils.logger import logger
+from .traceability import TraceabilityManager
+
+class CVAutomationPipeline:
+    """
+    End-to-end pipeline orchestrator.
+    Implements REQ-PIPE-01: Sequential deterministic execution
+    """
+    
+    def __init__(self):
+        self.agent1 = Agent1_InputValidator()
+        self.agent2 = Agent2_TemplateLoader()
+        self.agent3 = Agent3_SemanticExtractor()
+        self.agent4 = Agent4_MappingEngine()
+        self.agent5 = Agent5_PlaceholderAnalyzer()
+        self.agent6 = Agent6_ContentTransformer()
+        
+        self.traceability = TraceabilityManager()
+        self.pipeline_log = []
+    
+    def execute(self, cv_file_path: str, template_path: str, 
+                output_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Execute complete pipeline.
+        
+        Args:
+            cv_file_path: Path to CV file
+            template_path: Path to PowerPoint template
+            output_path: Optional output path for generated presentation
+        
+        Returns:
+            Complete pipeline result with traceability
+        """
+        pipeline_id = f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        logger.info(f"Starting pipeline execution: {pipeline_id}")
+        
+        try:
+            # Stage 1: Input Validation
+            logger.info("Stage 1: Validating input CV file")
+            agent1_result = self.agent1.execute({"file_path": cv_file_path})
+            
+            if agent1_result["status"] != "success":
+                raise CVAutomationError(f"Agent 1 failed: {agent1_result.get('error')}")
+            
+            self.traceability.add_stage("agent1_input_validation", agent1_result)
+            
+            # Stage 2: Template Loading
+            logger.info("Stage 2: Loading PowerPoint template")
+            agent2_result = self.agent2.execute({"template_path": template_path})
+            
+            if agent2_result["status"] != "success":
+                raise CVAutomationError(f"Agent 2 failed: {agent2_result.get('error')}")
+            
+            self.traceability.add_stage("agent2_template_loading", agent2_result)
+            
+            # Stage 3: Semantic CV Extraction
+            logger.info("Stage 3: Extracting CV data with semantic enrichment")
+            agent3_result = self.agent3.execute({
+                "text": agent1_result["result"]["text"],
+                "file_path": cv_file_path
+            })
+            
+            if agent3_result["status"] != "success":
+                raise CVAutomationError(f"Agent 3 failed: {agent3_result.get('error')}")
+            
+            self.traceability.add_stage("agent3_semantic_extraction", agent3_result)
+            
+            # Stage 4: CV-to-Template Mapping
+            logger.info("Stage 4: Generating intelligent mappings")
+            agent4_result = self.agent4.execute({
+                "cv_data": agent3_result["result"]["cv_data_dict"],
+                "placeholders": agent2_result["result"]["placeholders"]
+            })
+            
+            if agent4_result["status"] != "success":
+                raise CVAutomationError(f"Agent 4 failed: {agent4_result.get('error')}")
+            
+            self.traceability.add_stage("agent4_mapping", agent4_result)
+            
+            # Stage 5: Placeholder Analysis & Rule Generation
+            logger.info("Stage 5: Analyzing placeholders and generating rules")
+            agent5_result = self.agent5.execute({
+                "mappings": agent4_result["result"]["mappings"],
+                "placeholders": agent2_result["result"]["placeholders"],
+                "cv_data": agent3_result["result"]["cv_data_dict"]
+            })
+            
+            if agent5_result["status"] != "success":
+                raise CVAutomationError(f"Agent 5 failed: {agent5_result.get('error')}")
+            
+            self.traceability.add_stage("agent5_placeholder_analysis", agent5_result)
+            
+            # Stage 6: Content Transformation
+            logger.info("Stage 6: Transforming content with rules")
+            
+            # Prepare content mappings
+            content_mappings = []
+            for mapping in agent4_result["result"]["mappings"]:
+                placeholder_id = mapping["placeholder_id"]
+                rules = agent5_result["result"]["transformation_rules"].get(
+                    placeholder_id, {}
+                )
+                
+                content_mappings.append({
+                    "placeholder_id": placeholder_id,
+                    "source_field": mapping["source_field"],
+                    "rules": rules
+                })
+            
+            agent6_result = self.agent6.execute({
+                "content_mappings": content_mappings,
+                "cv_data": agent3_result["result"]["cv_data_dict"]
+            })
+            
+            if agent6_result["status"] != "success":
+                raise CVAutomationError(f"Agent 6 failed: {agent6_result.get('error')}")
+            
+            self.traceability.add_stage("agent6_content_transformation", agent6_result)
+            
+            # Stage 7: PowerPoint Generation
+            logger.info("Stage 7: Generating PowerPoint presentation")
+            presentation_result = self._generate_presentation(
+                agent2_result["result"]["presentation"],
+                agent2_result["result"]["placeholders"],
+                agent6_result["result"]["transformed_content"],
+                output_path or f"outputs/generated_{pipeline_id}.pptx"
+            )
+            
+            self.traceability.add_stage("presentation_generation", {
+                "status": "success",
+                "result": presentation_result
+            })
+            
+            # Generate traceability matrix
+            logger.info("Generating complete traceability matrix")
+            traceability_matrix = self.traceability.generate_matrix()
+            
+            # Export traceability
+            traceability_path = f"outputs/traceability/traceability_{pipeline_id}.json"
+            self.traceability.export_json(traceability_path)
+            
+            traceability_excel = f"outputs/traceability/traceability_{pipeline_id}.xlsx"
+            self.traceability.export_excel(traceability_excel)
+            
+            logger.info(f"Pipeline completed successfully: {pipeline_id}")
+            
+            return {
+                "status": "success",
+                "pipeline_id": pipeline_id,
+                "output_file": presentation_result["output_path"],
+                "traceability_json": traceability_path,
+                "traceability_excel": traceability_excel,
+                "stages": self.traceability.stages,
+                "summary": {
+                    "cv_file": cv_file_path,
+                    "template_file": template_path,
+                    "total_placeholders": len(agent2_result["result"]["placeholders"]),
+                    "mapped_placeholders": len(agent4_result["result"]["mappings"]),
+                    "transformations": len(agent6_result["result"]["transformed_content"]),
+                    "full_compliance": agent6_result["result"]["transformation_summary"]["full_compliance"],
+                    "partial_compliance": agent6_result["result"]["transformation_summary"]["partial_compliance"]
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Pipeline failed: {str(e)}")
+            
+            # Log failure
+            self.traceability.add_stage("pipeline_failure", {
+                "status": "failed",
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            
+            return {
+                "status": "failed",
+                "pipeline_id": pipeline_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "stages": self.traceability.stages
+            }
+    
+    def _generate_presentation(self, presentation, placeholders: List[Dict],
+                              transformed_content: List[Dict], 
+                              output_path: str) -> Dict[str, Any]:
+        """Generate PowerPoint with transformed content."""
+        from pptx.util import Pt
+        
+        # Create mapping of placeholder_id to transformed text
+        content_map = {
+            tc["placeholder_id"]: tc["transformed_text"]
+            for tc in transformed_content
+        }
+        
+        # Apply content to placeholders
+        applied_count = 0
+        
+        for placeholder in placeholders:
+            placeholder_id = placeholder["placeholder_id"]
+            
+            if placeholder_id not in content_map:
+                continue
+            
+            # Find the slide and shape
+            slide_idx = placeholder["slide_index"]
+            shape_idx = placeholder["shape_index"]
+            
+            try:
+                slide = presentation.slides[slide_idx]
+                shape = slide.shapes[shape_idx]
+                
+                if shape.has_text_frame:
+                    # Clear existing text
+                    shape.text_frame.clear()
+                    
+                    # Add new content
+                    transformed_text = content_map[placeholder_id]
+                    
+                    # Handle markdown formatting
+                    self._apply_text_with_formatting(
+                        shape.text_frame,
+                        transformed_text
+                    )
+                    
+                    applied_count += 1
+                    
+            except Exception as e:
+                logger.warning(f"Failed to apply content to {placeholder_id}: {str(e)}")
+        
+        # Save presentation
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        presentation.save(output_path)
+        
+        return {
+            "output_path": output_path,
+            "placeholders_filled": applied_count,
+            "total_placeholders": len(placeholders)
+        }
+    
+    def _apply_text_with_formatting(self, text_frame, formatted_text: str):
+        """Apply text with markdown formatting to text frame."""
+        from pptx.util import Pt
+        
+        # Split by lines for bullet points
+        lines = formatted_text.split('\n')
+        
+        for line_idx, line in enumerate(lines):
+            if not line.strip():
+                continue
+            
+            # Add paragraph
+            if line_idx == 0:
+                p = text_frame.paragraphs[0]
+            else:
+                p = text_frame.add_paragraph()
+            
+            # Handle bullet points
+            if line.strip().startswith('•'):
+                p.level = 0
+                line = line.strip()[1:].strip()  # Remove bullet
+            
+            # Parse and apply formatting
+            self._parse_and_apply_markdown(p, line)
+    
+    def _parse_and_apply_markdown(self, paragraph, text: str):
+        """Parse markdown and apply formatting to paragraph."""
+        # Simple markdown parser for bold and italic
+        parts = []
+        current = ""
+        i = 0
+        
+        while i < len(text):
+            if i < len(text) - 1 and text[i:i+2] == '**':
+                # Bold
+                if current:
+                    parts.append(("normal", current))
+                    current = ""
+                
+                # Find closing **
+                end = text.find('**', i + 2)
+                if end != -1:
+                    parts.append(("bold", text[i+2:end]))
+                    i = end + 2
+                    continue
+            
+            elif text[i] == '*':
+                # Italic
+                if current:
+                    parts.append(("normal", current))
+                    current = ""
+                
+                # Find closing *
+                end = text.find('*', i + 1)
+                if end != -1:
+                    parts.append(("italic", text[i+1:end]))
+                    i = end + 1
+                    continue
+            
+            current += text[i]
+            i += 1
+        
+        if current:
+            parts.append(("normal", current))
+        
+        # Apply parts to paragraph
+        for style, content in parts:
+            run = paragraph.add_run()
+            run.text = content
+            
+            if style == "bold":
+                run.font.bold = True
+            elif style == "italic":
+                run.font.italic = True
+```
+
+### Phase 3.2: Traceability Manager
+
+**File**: `src/pipeline/traceability.py`
+```python
+"""Traceability matrix generation and export."""
+import json
+from typing import Dict, Any, List
+from pathlib import Path
+from datetime import datetime
+import pandas as pd
+
+class TraceabilityManager:
+    """
+    Manages complete traceability matrix.
+    Implements REQ-EXP-01, REQ-EXP-02, REQ-EXP-03
+    """
+    
+    def __init__(self):
+        self.stages = []
+        self.start_time = datetime.now()
+    
+    def add_stage(self, stage_name: str, result: Dict[str, Any]):
+        """Add a pipeline stage result."""
+        stage_entry = {
+            "stage_name": stage_name,
+            "timestamp": datetime.now().isoformat(),
+            "status": result.get("status", "unknown"),
+            "result": result.get("result", {}),
+            "metadata": result.get("metadata", {}),
+            "error": result.get("error") if result.get("status") == "failed" else None
+        }
+        self.stages.append(stage_entry)
+    
+    def generate_matrix(self) -> List[Dict]:
+        """Generate complete traceability matrix."""
+        matrix = []
+        
+        for idx, stage in enumerate(self.stages):
+            entry = {
+                "stage_number": idx + 1,
+                "stage_name": stage["stage_name"],
+                "timestamp": stage["timestamp"],
+                "status": stage["status"],
+                "duration_seconds": self._calculate_duration(idx),
+                "inputs": self._extract_inputs(stage),
+                "outputs": self._extract_outputs(stage),
+                "metadata": stage["metadata"]
+            }
+            matrix.append(entry)
+        
+        return matrix
+    
+    def _calculate_duration(self, stage_idx: int) -> float:
+        """Calculate stage duration."""
+        if stage_idx == 0:
+            start = self.start_time
+        else:
+            start = datetime.fromisoformat(self.stages[stage_idx - 1]["timestamp"])
+        
+        end = datetime.fromisoformat(self.stages[stage_idx]["timestamp"])
+        
+        return (end - start).total_seconds()
+    
+    def _extract_inputs(self, stage: Dict) -> Dict:
+        """Extract input summary from stage."""
+        # Simplified - extract key inputs
+        return {
+            "status": stage["status"]
+        }
+    
+    def _extract_outputs(self, stage: Dict) -> Dict:
+        """Extract output summary from stage."""
+        result = stage.get("result", {})
+        
+        # Extract key metrics
+        outputs = {}
+        
+        if "cv_data" in result:
+            outputs["cv_extracted"] = True
+        
+        if "mappings" in result:
+            outputs["mappings_count"] = len(result["mappings"])
+        
+        if "transformed_content" in result:
+            outputs["transformations_count"] = len(result["transformed_content"])
+        
+        return outputs
+    
+    def export_json(self, output_path: str):
+        """Export traceability to JSON."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        export_data = {
+            "pipeline_start": self.start_time.isoformat(),
+            "pipeline_end": datetime.now().isoformat(),
+            "total_duration_seconds": (datetime.now() - self.start_time).total_seconds(),
+            "stages": self.stages,
+            "matrix": self.generate_matrix()
+        }
+        
+        with open(output_path, 'w') as f:
+            json.dump(export_data, f, indent=2)
+    
+    def export_excel(self, output_path: str):
+        """Export traceability to Excel."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        matrix = self.generate_matrix()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(matrix)
+        
+        # Create Excel writer
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Traceability', index=False)
+            
+            # Add summary sheet
+            summary = {
+                "Metric": [
+                    "Pipeline Start",
+                    "Pipeline End",
+                    "Total Duration (seconds)",
+                    "Total Stages",
+                    "Successful Stages",
+                    "Failed Stages"
+                ],
+                "Value": [
+                    self.start_time.isoformat(),
+                    datetime.now().isoformat(),
+                    (datetime.now() - self.start_time).total_seconds(),
+                    len(self.stages),
+                    sum(1 for s in self.stages if s["status"] == "success"),
+                    sum(1 for s in self.stages if s["status"] == "failed")
+                ]
+            }
+            
+            summary_df = pd.DataFrame(summary)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+```
+
+# Comprehensive Implementation Plan (Continued - Part 3)
+
+## 🧪 Phase 4: Testing & Validation Framework
+
+### Phase 4.1: Unit Tests for Core Components
+
+**File**: `tests/test_agents/test_agent3_extractor.py`
+```python
+"""Unit tests for Agent 3 - Semantic Extractor."""
+import pytest
+import json
+from src.agents.agent3_semantic_extractor import Agent3_SemanticExtractor
+from src.core.schemas import CVData, WorkExperience
+from src.core.exceptions import ExtractionError
+
+class TestAgent3SemanticExtractor:
+    """Test suite for semantic extraction agent."""
+    
+    @pytest.fixture
+    def agent(self):
+        """Create agent instance."""
+        return Agent3_SemanticExtractor()
+    
+    @pytest.fixture
+    def sample_cv_text(self):
+        """Sample CV text for testing."""
+        return """
+        John Smith
+        john.smith@email.com | +1-555-0123
+        New York, NY
+        
+        PROFESSIONAL EXPERIENCE
+        
+        Senior Consultant - McKinsey & Company
+        January 2023 - Present
+        • Led digital transformation projects for Fortune 500 oil & gas clients
+        • Managed cross-functional teams of 15+ consultants across 3 countries
+        • Implemented Python-based analytics platform reducing processing time by 60%
+        • Advised banking clients on regulatory compliance and risk management
+        
+        Consultant - Deloitte Consulting
+        June 2020 - December 2022
+        • Developed strategy frameworks for fintech startups
+        • Conducted market analysis for healthcare industry clients
+        • Created financial models using Excel and Python
+        
+        EDUCATION
+        
+        MBA, Finance
+        Harvard Business School, 2020
+        
+        BS, Computer Science
+        MIT, 2018
+        
+        SKILLS
+        Python, SQL, Tableau, Machine Learning, Strategic Planning
+        """
+    
+    def test_basic_extraction(self, agent, sample_cv_text):
+        """Test basic CV data extraction."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        assert result["status"] == "success"
+        assert "cv_data" in result["result"]
+        
+        cv_data = result["result"]["cv_data"]
+        assert cv_data.personal_info.full_name == "John Smith"
+        assert cv_data.personal_info.email == "john.smith@email.com"
+    
+    def test_temporal_anchoring(self, agent, sample_cv_text):
+        """Test temporal status determination (REQ-SEM-01)."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        cv_data = result["result"]["cv_data"]
+        work_exp = cv_data.work_experience
+        
+        # First role should be current
+        assert work_exp[0].is_current == True
+        assert work_exp[0].end_date is None or "present" in str(work_exp[0].end_date).lower()
+        
+        # Second role should be past
+        assert work_exp[1].is_current == False
+        assert work_exp[1].end_date is not None
+    
+    def test_industry_disambiguation(self, agent, sample_cv_text):
+        """Test consulting industry client extraction (REQ-SEM-03)."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        cv_data = result["result"]["cv_data"]
+        work_exp = cv_data.work_experience
+        
+        # Check McKinsey role has client industries
+        mckinsey_role = work_exp[0]
+        assert mckinsey_role.employer_industry.lower() in ["consulting", "professional services"]
+        assert len(mckinsey_role.client_industries) > 0
+        
+        # Should identify Oil & Gas and Banking
+        client_industries_lower = [ci.lower() for ci in mckinsey_role.client_industries]
+        assert any("oil" in ci or "gas" in ci or "energy" in ci for ci in client_industries_lower)
+    
+    def test_duration_calculation(self, agent, sample_cv_text):
+        """Test duration calculation."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        cv_data = result["result"]["cv_data"]
+        work_exp = cv_data.work_experience
+        
+        # Deloitte role: June 2020 - Dec 2022 = ~30 months
+        deloitte_role = next(exp for exp in work_exp if "Deloitte" in exp.company_name)
+        assert deloitte_role.duration_months is not None
+        assert 25 <= deloitte_role.duration_months <= 35  # Allow some flexibility
+    
+    def test_skill_extraction(self, agent, sample_cv_text):
+        """Test skill extraction enhancement (REQ-SEM-04)."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        cv_data = result["result"]["cv_data"]
+        
+        # Check technical skills extracted
+        assert len(cv_data.skills.technical) > 0
+        
+        # Check Python identified
+        skills_lower = [s.lower() for s in cv_data.skills.technical]
+        assert "python" in skills_lower
+    
+    def test_fallback_structure(self, agent):
+        """Test fallback structure creation (REQ-DET-03)."""
+        # Provide invalid/minimal CV text
+        invalid_text = "Not a valid CV"
+        
+        result = agent.execute({"text": invalid_text})
+        
+        # Should not fail, but use fallback
+        assert result["status"] == "success"
+        cv_data = result["result"]["cv_data"]
+        
+        # Should have minimal structure
+        assert cv_data.personal_info is not None
+    
+    def test_deterministic_execution(self, agent, sample_cv_text):
+        """Test deterministic execution (REQ-DET-01)."""
+        # Run extraction twice
+        result1 = agent.execute({"text": sample_cv_text})
+        result2 = agent.execute({"text": sample_cv_text})
+        
+        # Results should be identical
+        cv_data1 = result1["result"]["cv_data_dict"]
+        cv_data2 = result2["result"]["cv_data_dict"]
+        
+        # Compare key fields
+        assert cv_data1["personal_info"]["full_name"] == cv_data2["personal_info"]["full_name"]
+        assert len(cv_data1["work_experience"]) == len(cv_data2["work_experience"])
+    
+    def test_json_schema_compliance(self, agent, sample_cv_text):
+        """Test extracted data complies with schema."""
+        result = agent.execute({"text": sample_cv_text})
+        
+        cv_data_dict = result["result"]["cv_data_dict"]
+        
+        # Validate against schema
+        from src.core.validators import DataValidator
+        is_valid, errors = DataValidator.validate_json_schema(cv_data_dict)
+        
+        assert is_valid, f"Schema validation failed: {errors}"
+```
+
+**File**: `tests/test_agents/test_agent6_transformer.py`
+```python
+"""Unit tests for Agent 6 - Content Transformer."""
+import pytest
+from src.agents.agent6_content_transformer import Agent6_ContentTransformer
+from src.core.schemas import TransformationResult
+
+class TestAgent6ContentTransformer:
+    """Test suite for content transformation agent."""
+    
+    @pytest.fixture
+    def agent(self):
+        """Create agent instance."""
+        return Agent6_ContentTransformer()
+    
+    def test_hard_limit_enforcement(self, agent):
+        """Test hard character limit enforcement (REQ-A6-01)."""
+        long_text = "A" * 1000
+        
+        result = agent.transform_content(
+            source_text=long_text,
+            rules={"max_chars": 100},
+            placeholder_id="test_1"
+        )
+        
+        assert len(result.transformed_text) <= 100
+        assert result.compliance_status in ["full", "partial"]
+    
+    def test_active_voice_conversion(self, agent):
+        """Test active voice conversion (REQ-CON-02)."""
+        passive_text = "Projects were managed by the team. Solutions were developed by consultants."
+        
+        result = agent.transform_content(
+            source_text=passive_text,
+            rules={"tone": "active"},
+            placeholder_id="test_2"
+        )
+        
+        # Check for active voice indicators
+        assert "managed" in result.transformed_text.lower()
+        assert "were managed by" not in result.transformed_text.lower()
+    
+    def test_bullet_point_conversion(self, agent):
+        """Test bullet point formatting."""
+        text = "Managed teams. Developed solutions. Implemented systems. Achieved results."
+        
+        result = agent.transform_content(
+            source_text=text,
+            rules={"formatting": {"bullet_points": True}},
+            placeholder_id="test_3"
+        )
+        
+        # Should contain bullet points
+        assert "•" in result.transformed_text or "\n" in result.transformed_text
+    
+    def test_company_bold_formatting(self, agent):
+        """Test company name bolding (REQ-CON-01)."""
+        text = "Worked at McKinsey & Company on projects for Deloitte clients."
+        
+        result = agent.transform_content(
+            source_text=text,
+            rules={"formatting": {"bold_company": True}},
+            placeholder_id="test_4"
+        )
+        
+        # Should contain markdown bold
+        assert "**" in result.transformed_text
+    
+    def test_date_italic_formatting(self, agent):
+        """Test date italicization."""
+        text = "From 2020-01 to 2023-12, worked on various projects."
+        
+        result = agent.transform_content(
+            source_text=text,
+            rules={"formatting": {"italic_dates": True}},
+            placeholder_id="test_5"
+        )
+        
+        # Should contain markdown italic
+        assert "*" in result.transformed_text
+    
+    def test_summarization(self, agent):
+        """Test text summarization."""
+        long_text = """Led comprehensive digital transformation initiative for Fortune 500 
+        oil and gas client, managing cross-functional teams of 15+ consultants across 3 countries, 
+        implementing advanced Python-based analytics platform that reduced data processing time by 60%, 
+        while also developing strategic frameworks for regulatory compliance and risk management 
+        across multiple business units."""
+        
+        result = agent.transform_content(
+            source_text=long_text,
+            rules={"max_chars": 150},
+            placeholder_id="test_6"
+        )
+        
+        assert len(result.transformed_text) <= 150
+        assert "transformation" in result.transformed_text.lower() or "digital" in result.transformed_text.lower()
+    
+    def test_traceability_logging(self, agent):
+        """Test transformation traceability (REQ-EXP-01)."""
+        text = "Sample text for transformation"
+        
+        result = agent.transform_content(
+            source_text=text,
+            rules={"max_chars": 50, "tone": "active"},
+            placeholder_id="test_7"
+        )
+        
+        # Check transformations logged
+        assert len(result.transformations) > 0
+        assert result.metadata["timestamp"] is not None
+    
+    def test_deterministic_transformation(self, agent):
+        """Test deterministic transformation (REQ-DET-01)."""
+        text = "Sample text for testing"
+        rules = {"max_chars": 100, "tone": "active"}
+        
+        # Run twice
+        result1 = agent.transform_content(text, rules, "test_8")
+        result2 = agent.transform_content(text, rules, "test_9")
+        
+        # Results should be very similar (allowing for minor variations)
+        assert len(result1.transformed_text) == len(result2.transformed_text) or \
+               abs(len(result1.transformed_text) - len(result2.transformed_text)) <= 5
+```
+
+### Phase 4.2: Integration Tests
+
+**File**: `tests/test_integration/test_full_pipeline.py`
+```python
+"""Integration tests for complete pipeline."""
+import pytest
+from pathlib import Path
+from src.pipeline.orchestrator import CVAutomationPipeline
+
+class TestFullPipeline:
+    """Integration tests for end-to-end pipeline."""
+    
+    @pytest.fixture
+    def pipeline(self):
+        """Create pipeline instance."""
+        return CVAutomationPipeline()
+    
+    @pytest.fixture
+    def test_cv_path(self, tmp_path):
+        """Create test CV file."""
+        cv_content = """
+        Jane Doe
+        jane.doe@example.com
+        
+        EXPERIENCE
+        Senior Data Scientist - Tech Corp
+        2023 - Present
+        • Built ML models for customer segmentation
+        • Led team of 5 data scientists
+        
+        Data Analyst - Finance Inc
+        2020 - 2023
+        • Analyzed financial data using Python
+        • Created dashboards in Tableau
+        
+        EDUCATION
+        MS Data Science - Stanford University, 2020
+        BS Mathematics - MIT, 2018
+        
+        SKILLS
+        Python, R, SQL, TensorFlow, PyTorch
+        """
+        
+        cv_path = tmp_path / "test_cv.txt"
+        cv_path.write_text(cv_content)
+        return str(cv_path)
+    
+    @pytest.fixture
+    def test_template_path(self):
+        """Path to test template."""
+        # Assumes you have a test template
+        return "tests/fixtures/test_template.pptx"
+    
+    def test_complete_pipeline_execution(self, pipeline, test_cv_path, test_template_path):
+        """Test complete pipeline from CV to PowerPoint."""
+        if not Path(test_template_path).exists():
+            pytest.skip("Test template not found")
+        
+        result = pipeline.execute(
+            cv_file_path=test_cv_path,
+            template_path=test_template_path
+        )
+        
+        assert result["status"] == "success"
+        assert "output_file" in result
+        assert Path(result["output_file"]).exists()
+    
+    def test_traceability_generation(self, pipeline, test_cv_path, test_template_path):
+        """Test traceability matrix generation."""
+        if not Path(test_template_path).exists():
+            pytest.skip("Test template not found")
+        
+        result = pipeline.execute(
+            cv_file_path=test_cv_path,
+            template_path=test_template_path
+        )
+        
+        assert "traceability_json" in result
+        assert Path(result["traceability_json"]).exists()
+        assert "traceability_excel" in result
+        assert Path(result["traceability_excel"]).exists()
+    
+    def test_pipeline_error_handling(self, pipeline):
+        """Test pipeline handles errors gracefully."""
+        result = pipeline.execute(
+            cv_file_path="nonexistent.txt",
+            template_path="nonexistent.pptx"
+        )
+        
+        assert result["status"] == "failed"
+        assert "error" in result
+```
+
+### Phase 4.3: Test Fixtures and Data
+
+**File**: `tests/fixtures/create_test_template.py`
+```python
+"""Create test PowerPoint template for testing."""
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
+def create_test_template():
+    """Create a simple test template."""
+    prs = Presentation()
+    
+    # Slide 1: Title slide
+    slide_layout = prs.slide_layouts[0]  # Title slide layout
+    slide = prs.slides.add_slide(slide_layout)
+    
+    title = slide.shapes.title
+    title.text = "{{NAME}}"
+    
+    subtitle = slide.placeholders[1]
+    subtitle.text = "{{JOB_TITLE}}"
+    
+    # Slide 2: Experience slide
+    slide_layout = prs.slide_layouts[1]  # Title and content
+    slide = prs.slides.add_slide(slide_layout)
+    
+    title = slide.shapes.title
+    title.text = "Professional Experience"
+    
+    # Add text box for experience
+    left = Inches(1)
+    top = Inches(2)
+    width = Inches(8)
+    height = Inches(4)
+    
+    textbox = slide.shapes.add_textbox(left, top, width, height)
+    text_frame = textbox.text_frame
+    text_frame.text = "{{EXPERIENCE}}"
+    
+    # Slide 3: Skills slide
+    slide_layout = prs.slide_layouts[1]
+    slide = prs.slides.add_slide(slide_layout)
+    
+    title = slide.shapes.title
+    title.text = "Skills & Expertise"
+    
+    textbox = slide.shapes.add_textbox(left, top, width, height)
+    text_frame = textbox.text_frame
+    text_frame.text = "{{SKILLS}}"
+    
+    # Save template
+    prs.save("tests/fixtures/test_template.pptx")
+    print("Test template created: tests/fixtures/test_template.pptx")
+
+if __name__ == "__main__":
+    create_test_template()
+```
+
+### Phase 4.4: Test Runner Configuration
+
+**File**: `pytest.ini`
+```ini
+[pytest]
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+addopts = 
+    -v
+    --strict-markers
+    --tb=short
+    --cov=src
+    --cov-report=html
+    --cov-report=term-missing
+markers =
+    unit: Unit tests
+    integration: Integration tests
+    slow: Slow running tests
+```
+
+**File**: `tests/conftest.py`
+```python
+"""Pytest configuration and shared fixtures."""
+import pytest
+import os
+from pathlib import Path
+
+@pytest.fixture(scope="session")
+def test_data_dir():
+    """Return path to test data directory."""
+    return Path(__file__).parent / "fixtures"
+
+@pytest.fixture(scope="session")
+def output_dir(tmp_path_factory):
+    """Create temporary output directory."""
+    return tmp_path_factory.mktemp("outputs")
+
+@pytest.fixture(autouse=True)
+def setup_env():
+    """Setup test environment variables."""
+    os.environ["GEMINI_API_KEY"] = os.getenv("GEMINI_API_KEY", "test_key")
+    os.environ["LOG_LEVEL"] = "ERROR"  # Suppress logs during testing
+
+@pytest.fixture
+def sample_cv_data():
+    """Return sample CV data for testing."""
+    return {
+        "personal_info": {
+            "full_name": "Test User",
+            "email": "test@example.com",
+            "phone": "+1-555-0100",
+            "location": "San Francisco, CA"
+        },
+        "work_experience": [
+            {
+                "company_name": "Test Company",
+                "job_title": "Senior Consultant",
+                "start_date": "2023-01",
+                "end_date": None,
+                "is_current": True,
+                "employer_industry": "Consulting",
+                "client_industries": ["Technology", "Healthcare"],
+                "responsibilities": [
+                    "Led digital transformation projects",
+                    "Managed team of 10 consultants"
+                ],
+                "skills_used": ["Python", "SQL", "Tableau"]
+            }
+        ],
+        "education": [
+            {
+                "institution": "Test University",
+                "degree": "MBA",
+                "field": "Business Administration",
+                "graduation_date": "2022-05"
+            }
+        ],
+        "skills": {
+            "technical": ["Python", "SQL", "Machine Learning"],
+            "soft": ["Leadership", "Communication"],
+            "certifications": ["PMP", "AWS Certified"]
+        }
+    }
+```
+
+---
+
+## 📊 Phase 5: Advanced Traceability & Reporting
+
+### Phase 5.1: Enhanced Traceability Matrix
+
+**File**: `src/pipeline/advanced_traceability.py`
+```python
+"""Advanced traceability with detailed metrics and visualization."""
+import json
+from typing import Dict, Any, List
+from pathlib import Path
+from datetime import datetime
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils.dataframe import dataframe_to_rows
+
+class AdvancedTraceabilityManager:
+    """
+    Enhanced traceability with detailed transformation tracking.
+    Implements REQ-EXP-01, REQ-EXP-02, REQ-EXP-03
+    """
+    
+    def __init__(self):
+        self.transformations = []
+        self.agent_metrics = {}
+        self.pipeline_metadata = {
+            "start_time": datetime.now(),
+            "version": "1.0.0"
+        }
+    
+    def log_transformation(self, transformation: Dict[str, Any]):
+        """Log individual transformation with full details."""
+        detailed_entry = {
+            "transformation_id": len(self.transformations) + 1,
+            "timestamp": datetime.now().isoformat(),
+            "placeholder_id": transformation.get("placeholder_id"),
+            "source_field": transformation.get("source_field"),
+            
+            # Before state
+            "original_text": transformation.get("original_text", ""),
+            "original_length": len(transformation.get("original_text", "")),
+            "original_word_count": len(transformation.get("original_text", "").split()),
+            
+            # Transformation rules
+            "rules_applied": transformation.get("rules_applied", {}),
+            "max_chars_limit": transformation.get("rules_applied", {}).get("max_chars"),
+            
+            # After state
+            "transformed_text": transformation.get("transformed_text", ""),
+            "final_length": len(transformation.get("transformed_text", "")),
+            "final_word_count": len(transformation.get("transformed_text", "").split()),
+            
+            # Compliance
+            "compliance_status": transformation.get("compliance_status", "unknown"),
+            "was_truncated": transformation.get("was_truncated", False),
+            "truncation_percentage": self._calculate_truncation_percentage(
+                len(transformation.get("original_text", "")),
+                len(transformation.get("transformed_text", ""))
+            ),
+            
+            # Transformation steps
+            "transformation_steps": transformation.get("transformations", []),
+            "steps_count": len(transformation.get("transformations", [])),
+            
+            # Quality metrics
+            "quality_score": self._calculate_quality_score(transformation)
+        }
+        
+        self.transformations.append(detailed_entry)
+    
+    def _calculate_truncation_percentage(self, original: int, final: int) -> float:
+        """Calculate percentage of content truncated."""
+        if original == 0:
+            return 0.0
+        return ((original - final) / original) * 100 if final < original else 0.0
+    
+    def _calculate_quality_score(self, transformation: Dict) -> float:
+        """Calculate quality score (0-100) for transformation."""
+        score = 100.0
+        
+        # Deduct for truncation
+        if transformation.get("was_truncated"):
+            score -= 20
+        
+        # Deduct for failed compliance
+        if transformation.get("compliance_status") == "failed":
+            score -= 30
+        elif transformation.get("compliance_status") == "partial":
+            score -= 10
+        
+        # Bonus for successful transformations
+        if len(transformation.get("transformations", [])) > 0:
+            score += 5
+        
+        return max(0.0, min(100.0, score))
+    
+    def generate_comprehensive_report(self) -> Dict[str, Any]:
+        """Generate comprehensive traceability report."""
+        return {
+            "pipeline_metadata": {
+                "start_time": self.pipeline_metadata["start_time"].isoformat(),
+                "end_time": datetime.now().isoformat(),
+                "duration_seconds": (datetime.now() - self.pipeline_metadata["start_time"]).total_seconds(),
+                "version": self.pipeline_metadata["version"]
+            },
+            "summary_statistics": self._generate_summary_stats(),
+            "transformations": self.transformations,
+            "agent_metrics": self.agent_metrics,
+            "quality_analysis": self._generate_quality_analysis(),
+            "compliance_analysis": self._generate_compliance_analysis()
+        }
+    
+    def _generate_summary_stats(self) -> Dict[str, Any]:
+        """Generate summary statistics."""
+        if not self.transformations:
+            return {}
+        
+        total_original_length = sum(t["original_length"] for t in self.transformations)
+        total_final_length = sum(t["final_length"] for t in self.transformations)
+        
+        return {
+            "total_transformations": len(self.transformations),
+            "total_original_chars": total_original_length,
+            "total_final_chars": total_final_length,
+            "avg_original_length": total_original_length / len(self.transformations),
+            "avg_final_length": total_final_length / len(self.transformations),
+            "total_truncated": sum(1 for t in self.transformations if t["was_truncated"]),
+            "avg_quality_score": sum(t["quality_score"] for t in self.transformations) / len(self.transformations)
+        }
+    
+    def _generate_quality_analysis(self) -> Dict[str, Any]:
+        """Analyze transformation quality."""
+        quality_scores = [t["quality_score"] for t in self.transformations]
+        
+        return {
+            "avg_quality": sum(quality_scores) / len(quality_scores) if quality_scores else 0,
+            "min_quality": min(quality_scores) if quality_scores else 0,
+            "max_quality": max(quality_scores) if quality_scores else 0,
+            "high_quality_count": sum(1 for s in quality_scores if s >= 80),
+            "medium_quality_count": sum(1 for s in quality_scores if 50 <= s < 80),
+            "low_quality_count": sum(1 for s in quality_scores if s < 50)
+        }
+    
+    def _generate_compliance_analysis(self) -> Dict[str, Any]:
+        """Analyze compliance status."""
+        compliance_counts = {
+            "full": 0,
+            "partial": 0,
+            "failed": 0,
+            "unknown": 0
+        }
+        
+        for t in self.transformations:
+            status = t.get("compliance_status", "unknown")
+            compliance_counts[status] = compliance_counts.get(status, 0) + 1
+        
+        total = len(self.transformations)
+        
+        return {
+            "compliance_counts": compliance_counts,
+            "compliance_percentages": {
+                status: (count / total * 100) if total > 0 else 0
+                for status, count in compliance_counts.items()
+            }
+        }
+    
+    def export_detailed_excel(self, output_path: str):
+        """Export detailed traceability to Excel with multiple sheets."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            
+            # Sheet 1: Summary
+            summary_data = {
+                "Metric": [
+                    "Pipeline Start Time",
+                    "Pipeline End Time",
+                    "Total Duration (seconds)",
+                    "Total Transformations",
+                    "Average Quality Score",
+                    "Full Compliance Count",
+                    "Partial Compliance Count",
+                    "Failed Compliance Count"
+                ],
+                "Value": [
+                    self.pipeline_metadata["start_time"].isoformat(),
+                    datetime.now().isoformat(),
+                    (datetime.now() - self.pipeline_metadata["start_time"]).total_seconds(),
+                    len(self.transformations),
+                    self._generate_summary_stats().get("avg_quality_score", 0),
+                    self._generate_compliance_analysis()["compliance_counts"]["full"],
+                    self._generate_compliance_analysis()["compliance_counts"]["partial"],
+                    self._generate_compliance_analysis()["compliance_counts"]["failed"]
+                ]
+            }
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Sheet 2: Transformations Detail
+            transformations_df = pd.DataFrame([
+                {
+                    "ID": t["transformation_id"],
+                    "Placeholder": t["placeholder_id"],
+                    "Source Field": t["source_field"],
+                    "Original Length": t["original_length"],
+                    "Final Length": t["final_length"],
+                    "Truncation %": round(t["truncation_percentage"], 2),
+                    "Compliance": t["compliance_status"],
+                    "Quality Score": round(t["quality_score"], 2),
+                    "Steps Count": t["steps_count"]
+                }
+                for t in self.transformations
+            ])
+            transformations_df.to_excel(writer, sheet_name='Transformations', index=False)
+            
+            # Sheet 3: Full Text Comparison
+            comparison_df = pd.DataFrame([
+                {
+                    "Placeholder": t["placeholder_id"],
+                    "Original Text": t["original_text"][:500],  # Truncate for Excel
+                    "Transformed Text": t["transformed_text"][:500],
+                    "Rules": str(t["rules_applied"])
+                }
+                for t in self.transformations
+            ])
+            comparison_df.to_excel(writer, sheet_name='Text Comparison', index=False)
+            
+            # Sheet 4: Quality Analysis
+            quality_analysis = self._generate_quality_analysis()
+            quality_df = pd.DataFrame([
+                {"Metric": k, "Value": v}
+                for k, v in quality_analysis.items()
+            ])
+            quality_df.to_excel(writer, sheet_name='Quality Analysis', index=False)
+        
+        # Apply formatting
+        self._apply_excel_formatting(output_path)
+    
+    def _apply_excel_formatting(self, file_path: str):
+        """Apply professional formatting to Excel file."""
+        from openpyxl import load_workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        wb = load_workbook(file_path)
+        
+        # Define styles
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(color="FFFFFF", bold=True)
+        
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            
+            # Format headers
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+            # Auto-adjust column widths
+            for column in ws.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                
+                adjusted_width = min(max_length + 2, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+        
+        wb.save(file_path)
+    
+    def export_html_report(self, output_path: str):
+        """Export interactive HTML report."""
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        report = self.generate_comprehensive_report()
+        
+        html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CV Automation Traceability Report</title>
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        h1 {{
+            color: #366092;
+            border-bottom: 3px solid #366092;
+            padding-bottom: 10px;
+        }}
+        h2 {{
+            color: #555;
+            margin-top: 30px;
+        }}
+        .metric-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }}
+        .metric-card {{
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 6px;
+            border-left: 4px solid #366092;
+        }}
+        .metric-card h3 {{
+            margin: 0 0 10px 0;
+            color: #666;
+            font-size: 14px;
+        }}
+        .metric-card .value {{
+            font-size: 28px;
+            font-weight: bold;
+            color: #366092;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background-color: #366092;
+            color: white;
+            font-weight: bold;
+        }}
+        tr:hover {{
+            background-color: #f5f5f5;
+        }}
+        .status-full {{
+            color: green;
+            font-weight: bold;
+        }}
+        .status-partial {{
+            color: orange;
+            font-weight: bold;
+        }}
+        .status-failed {{
+            color: red;
+            font-weight: bold;
+        }}
+        .quality-high {{
+            color: green;
+        }}
+        .quality-medium {{
+            color: orange;
+        }}
+        .quality-low {{
+            color: red;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CV Automation Traceability Report</h1>
+        
+        <h2>Pipeline Summary</h2>
+        <div class="metric-grid">
+            <div class="metric-card">
+                <h3>Total Transformations</h3>
+                <div class="value">{report['summary_statistics']['total_transformations']}</div>
+            </div>
+            <div class="metric-card">
+                <h3>Average Quality Score</h3>
+                <div class="value">{report['summary_statistics']['avg_quality_score']:.1f}</div>
+            </div>
+            <div class="metric-card">
+                <h3>Full Compliance</h3>
+                <div class="value">{report['compliance_analysis']['compliance_counts']['full']}</div>
+            </div>
+            <div class="metric-card">
+                <h3>Duration (seconds)</h3>
+                <div class="value">{report['pipeline_metadata']['duration_seconds']:.1f}</div>
+            </div>
+        </div>
+        
+        <h2>Transformation Details</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Placeholder</th>
+                    <th>Original Length</th>
+                    <th>Final Length</th>
+                    <th>Compliance</th>
+                    <th>Quality Score</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        
+        # Add transformation rows
+        for t in report['transformations']:
+            compliance_class = f"status-{t['compliance_status']}"
+            quality_class = "quality-high" if t['quality_score'] >= 80 else "quality-medium" if t['quality_score'] >= 50 else "quality-low"
+            
+            html_content += f"""
+                <tr>
+                    <td>{t['transformation_id']}</td>
+                    <td>{t['placeholder_id']}</td>
+                    <td>{t['original_length']}</td>
+                    <td>{t['final_length']}</td>
+                    <td class="{compliance_class}">{t['compliance_status']}</td>
+                    <td class="{quality_class}">{t['quality_score']:.1f}</td>
+                </tr>
+"""
+        
+        html_content += """
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""
+        
+        with open(output_path, 'w') as f:
+            f.write(html_content)
+```
+
+---
+
+## 📚 Phase 6: Documentation & Deployment
+
+### Phase 6.1: API Documentation
+
+**File**: `docs/api_reference.md`
+```markdown
+# CV Automation System - API Reference
+
+## Pipeline Orchestrator
+
+### `CVAutomationPipeline.execute()`
+
+Main entry point for CV-to-PowerPoint conversion.
+
+**Parameters:**
+- `cv_file_path` (str): Path to CV file (.pdf, .docx, .txt)
+- `template_path` (str): Path to PowerPoint template (.pptx)
+- `output_path` (str, optional): Output path for generated presentation
+
+**Returns:**
+```python
+{
+    "status": "success" | "failed",
+    "pipeline_id": str,
+    "output_file": str,
+    "traceability_json": str,
+    "traceability_excel": str,
+    "summary": {
+        "total_placeholders": int,
+        "mapped_placeholders": int,
+        "transformations": int,
+        "full_compliance": int,
+        "partial_compliance": int
+    }
+}
+```
+
+**Example:**
+```python
+from src.pipeline.orchestrator import CVAutomationPipeline
+
+pipeline = CVAutomationPipeline()
+result = pipeline.execute(
+    cv_file_path="data/john_smith_cv.pdf",
+    template_path="templates/consulting_template.pptx",
+    output_path="outputs/john_smith_presentation.pptx"
+)
+
+print(f"Generated: {result['output_file']}")
+print(f"Traceability: {result['traceability_excel']}")
+```
+
+## Agent APIs
+
+### Agent 3: Semantic Extractor
+
+**`Agent3_SemanticExtractor.process()`**
+
+Extracts CV data with semantic enrichment.
+
+**Input:**
+```python
+{
+    "text": str,              # CV text content
+    "file_path": str          # Optional file path
+}
+```
+
+**Output:**
+```python
+{
+    "cv_data": CVData,        # Structured CV data object
+    "cv_data_dict": dict,     # Dictionary representation
+    "extraction_metadata": {
+        "attempts": int,
+        "confidence": str,
+        "timestamp": str
+    },
+    "semantic_enrichment": {
+        "temporal_anchoring": list,
+        "industry_disambiguation": list,
+        "skill_extraction": list
+    }
+}
+```
+
+### Agent 6: Content Transformer
+
+**`Agent6_ContentTransformer.transform_content()`**
+
+Transforms content according to rules.
+
+**Parameters:**
+- `source_text` (str): Original text to transform
+- `rules` (dict): Transformation rules
+- `placeholder_id` (str): Identifier for traceability
+
+**Rules Dictionary:**
+```python
+{
+    "max_chars": int,              # Hard character limit
+    "tone": str,                   # "active", "formal", "concise"
+    "transformation_type": str,     # "direct", "summarize", "bullet_list"
+    "formatting": {
+        "bold_company": bool,
+        "italic_dates": bool,
+        "bullet_points": bool
+    }
+}
+```
+
+**Returns:**
+```python
+TransformationResult {
+    "placeholder_id": str,
+    "original_text": str,
+    "transformed_text": str,
+    "rules_applied": dict,
+    "compliance_status": str,
+    "transformations": list,
+    "metadata": dict
+}
+```
+
+## Data Schemas
+
+### CVData
+
+```python
+@dataclass
+class CVData:
+    personal_info: PersonalInfo
+    work_experience: List[WorkExperience]
+    education: List[Education]
+    skills: Skills
+    extraction_timestamp: str
+    extraction_confidence: ConfidenceLevel
+```
+
+### WorkExperience
+
+```python
+@dataclass
+class WorkExperience:
+    company_name: str
+    job_title: str
+    start_date: str              # YYYY-MM format
+    end_date: Optional[str]      # YYYY-MM or None
+    is_current: bool
+    employer_industry: str
+    client_industries: List[str]
+    responsibilities: List[str]
+    projects: List[Project]
+    skills_used: List[str]
+    temporal_confidence: float
+    date_status: DateStatus
+    duration_months: Optional[int]
+```
+```
+
+### Phase 6.2: User Guide
+
+**File**: `docs/user_guide.md`
+```markdown
+# CV Automation System - User Guide
+
+## Quick Start
+
+### 1. Installation
+
+```bash
+# Clone repository
+git clone <repository_url>
+cd cv-automation-system
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Setup environment variables
+cp .env.example .env
+# Edit .env and add your GEMINI_API_KEY
+```
+
+### 2. Basic Usage
+
+```python
+from src.pipeline.orchestrator import CVAutomationPipeline
+
+# Initialize pipeline
+pipeline = CVAutomationPipeline()
+
+# Execute conversion
+result = pipeline.execute(
+    cv_file_path="path/to/cv.pdf",
+    template_path="path/to/template.pptx"
+)
+
+# Check result
+if result["status"] == "success":
+    print(f"✓ Generated: {result['output_file']}")
+    print(f"✓ Traceability: {result['traceability_excel']}")
+else:
+    print(f"✗ Error: {result['error']}")
+```
+
+### 3. Command Line Usage
+
+```bash
+# Run complete pipeline
+python -m src.main --cv cv_file.pdf --template template.pptx --output output.pptx
+
+# With traceability
+python -m src.main --cv cv_file.pdf --template template.pptx --output output.pptx --trace
+
+# Generate only traceability report
+python -m src.main --cv cv_file.pdf --template template.pptx --trace-only
+```
+
+## Advanced Features
+
+### Custom Transformation Rules
+
+```python
+from src.agents.agent6_content_transformer import Agent6_ContentTransformer
+
+transformer = Agent6_ContentTransformer()
+
+# Define custom rules
+custom_rules = {
+    "max_chars": 200,
+    "tone": "active",
+    "transformation_type": "summarize",
+    "formatting": {
+        "bold_company": True,
+        "italic_dates": True,
+        "bullet_points": True
+    }
+}
+
+# Transform content
+result = transformer.transform_content(
+    source_text="Your text here...",
+    rules=custom_rules,
+    placeholder_id="custom_1"
+)
+```
+
+### Semantic Extraction Configuration
+
+```python
+from src.agents.agent3_semantic_extractor import Agent3_SemanticExtractor
+
+extractor = Agent3_SemanticExtractor()
+
+# Extract with custom settings
+result = extractor.execute({
+    "text": cv_text,
+    "file_path": "cv.pdf"
+})
+
+# Access semantic enrichment
+enrichment = result["result"]["semantic_enrichment"]
+print(f"Temporal anchoring: {enrichment['temporal_anchoring']}")
+print(f"Client industries: {enrichment['industry_disambiguation']}")
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**Issue: "GEMINI_API_KEY not found"**
+- Solution: Ensure .env file exists with valid API key
+- Verify: `echo $GEMINI_API_KEY` (Linux/Mac) or `echo %GEMINI_API_KEY%` (Windows)
+
+**Issue: "Template not found"**
+- Solution: Verify template path is correct
+- Template must be .pptx format
+- Use absolute paths or paths relative to project root
+
+**Issue: "Extraction failed after retries"**
+- Solution: Check CV text quality
+- Ensure CV has standard sections (Experience, Education, Skills)
+- Try with .txt format for better text extraction
+
+**Issue: "Transformation exceeded character limit"**
+- Expected behavior: System enforces hard limits
+- Check traceability report for truncation details
+- Adjust placeholder size or rules if needed
+
+## Performance Optimization
+
+### Tips for Faster Processing
+
+1. **Use smaller templates**: Fewer placeholders = faster processing
+2. **Batch processing**: Process multiple CVs sequentially
+3. **Cache API responses**: (Future feature)
+4. **Optimize CV format**: .txt files process faster than .pdf
+
+### Resource Requirements
+
+- **Memory**: 2GB minimum, 4GB recommended
+- **CPU**: Multi-core recommended for parallel processing
+- **Disk**: 1GB for outputs and logs
+- **Network**: Stable internet for Gemini API calls
+
+## Best Practices
+
+### CV Preparation
+
+1. Use standard section headers (Experience, Education, Skills)
+2. Include dates in consistent format (YYYY-MM preferred)
+3. Clearly separate roles with blank lines or headers
+4. List skills explicitly rather than embedding in descriptions
+
+### Template Design
+
+1. Use clear placeholder names ({{NAME}}, {{EXPERIENCE}})
+2. Size placeholders appropriately for expected content
+3. Test template with sample data before production use
+4. Include fallback placeholders for optional sections
+
+### Quality Assurance
+
+1. Always review traceability matrix
+2. Check compliance status for each transformation
+3. Verify formatting in output presentation
+4. Test with diverse CV formats
+5. Monitor quality scores in reports
+```
+
+### Phase 6.3: Deployment Script
+
+**File**: `deploy.py`
+```python
+"""Deployment and setup script."""
+import subprocess
+import sys
+from pathlib import Path
+import os
+
+def check_python_version():
+    """Check Python version compatibility."""
+    if sys.version_info < (3, 10):
+        print("❌ Python 3.10 or higher is required")
+        sys.exit(1)
+    print("✓ Python version compatible")
+
+def create_directories():
+    """Create necessary directories."""
+    directories = [
+        "outputs",
+        "outputs/traceability",
+        "logs",
+        "data",
+        "templates"
+    ]
+    
+    for dir_path in directories:
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+    print("✓ Directories created")
+
+def install_dependencies():
+    """Install required packages."""
+    print("Installing dependencies...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+    print("✓ Dependencies installed")
+
+def setup_environment():
+    """Setup environment file."""
+    env_example = Path(".env.example")
+    env_file = Path(".env")
+    
+    if not env_file.exists() and env_example.exists():
+        import shutil
+        shutil.copy(env_example, env_file)
+        print("✓ .env file created")
+        print("⚠️  Please edit .env and add your GEMINI_API_KEY")
+    elif env_file.exists():
+        print("✓ .env file already exists")
+    else:
+        print("⚠️  No .env.example found")
+
+def run_tests():
+    """Run test suite."""
+    print("Running tests...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pytest", "tests/", "-v"])
+        print("✓ All tests passed")
+    except subprocess.CalledProcessError:
+        print("⚠️  Some tests failed")
+
+def create_test_template():
+    """Create test PowerPoint template."""
+    test_template_script = Path("tests/fixtures/create_test_template.py")
+    if test_template_script.exists():
+        print("Creating test template...")
+        subprocess.check_call([sys.executable, str(test_template_script)])
+        print("✓ Test template created")
+
+def main():
+    """Main deployment function."""
+    print("=" * 50)
+    print("CV Automation System - Deployment")
+    print("=" * 50)
+    
+    try:
+        check_python_version()
+        create_directories()
+        install_dependencies()
+        setup_environment()
+        create_test_template()
+        
+        print("\n" + "=" * 50)
+        print("✓ Deployment complete!")
+        print("=" * 50)
+        print("\nNext steps:")
+        print("1. Edit .env file and add your GEMINI_API_KEY")
+        print("2. Run tests: pytest tests/")
+        print("3. Try example: python examples/basic_example.py")
+        
+    except Exception as e:
+        print(f"\n❌ Deployment failed: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Phase 6.4: Example Usage Scripts
+
+**File**: `examples/basic_example.py`
+```python
+"""Basic usage example."""
+from pathlib import Path
+from src.pipeline.orchestrator import CVAutomationPipeline
+
+def main():
+    """Run basic CV automation example."""
+    
+    # Initialize pipeline
+    print("Initializing pipeline...")
+    pipeline = CVAutomationPipeline()
+    
+    # Set paths
+    cv_path = "examples/sample_cv.txt"
+    template_path = "tests/fixtures/test_template.pptx"
+    output_path = "outputs/example_output.pptx"
+    
+    # Check files exist
+    if not Path(cv_path).exists():
+        print(f"Error: CV file not found: {cv_path}")
+        return
+    
+    if not Path(template_path).exists():
+        print(f"Error: Template not found: {template_path}")
+        return
+    
+    # Execute pipeline
+    print(f"Processing CV: {cv_path}")
+    print(f"Using template: {template_path}")
+    
+    result = pipeline.execute(
+        cv_file_path=cv_path,
+        template_path=template_path,
+        output_path=output_path
+    )
+    
+    # Display results
+    if result["status"] == "success":
+        print("\n✓ Pipeline completed successfully!")
+        print(f"  Output: {result['output_file']}")
+        print(f"  Traceability JSON: {result['traceability_json']}")
+        print(f"  Traceability Excel: {result['traceability_excel']}")
+        print(f"\nSummary:")
+        print(f"  Total placeholders: {result['summary']['total_placeholders']}")
+        print(f"  Mapped placeholders: {result['summary']['mapped_placeholders']}")
+        print(f"  Transformations: {result['summary']['transformations']}")
+        print(f"  Full compliance: {result['summary']['full_compliance']}")
+    else:
+        print(f"\n✗ Pipeline failed: {result['error']}")
+
+if __name__ == "__main__":
+    main()
+```
+
+**File**: `examples/sample_cv.txt`
+```text
+JANE DOE
+jane.doe@email.com | +1-555-9876 | San Francisco, CA
+
+PROFESSIONAL EXPERIENCE
+
+Principal Consultant - Accenture Strategy
+March 2023 - Present
+• Leading digital transformation initiatives for Fortune 100 technology clients across North America and EMEA regions
+• Managing portfolio of 8+ concurrent projects with combined budget exceeding $50M annually
+• Developed proprietary AI-powered analytics framework adopted across 12 client engagements
+• Spearheading cloud migration strategy for multinational retail corporation with 500+ stores
+• Mentoring team of 20 junior consultants and leading talent development initiatives
+
+Senior Business Analyst - Deloitte Consulting
+January 2020 - February 2023
+• Conducted comprehensive market analysis for healthcare and pharmaceutical industry clients
+• Designed financial models and ROI projections for $100M+ capital investment decisions
+• Led requirements gathering and stakeholder management for enterprise ERP implementation
+• Developed Python-based automation tools reducing reporting time by 70%
+• Collaborated with C-suite executives on strategic planning and organizational transformation
+
+Business Analyst - PwC Advisory
+June 2018 - December 2019
+• Performed data analysis and visualization for banking and financial services clients
+• Created executive dashboards using Tableau and Power BI
+• Supported due diligence processes for M&A transactions
+• Conducted competitive intelligence research and market sizing studies
+
+EDUCATION
+
+Master of Business Administration (MBA)
+Stanford Graduate School of Business, 2018
+Concentration: Strategy and Operations
+
+Bachelor of Science in Computer Science
+University of California, Berkeley, 2016
+GPA: 3.9/4.0, Summa Cum Laude
+
+SKILLS & CERTIFICATIONS
+
+Technical: Python, SQL, R, Tableau, Power BI, Excel (Advanced), Alteryx, Salesforce
+Cloud Platforms: AWS, Azure, Google Cloud Platform
+Methodologies: Agile, Scrum, Six Sigma, Design Thinking
+Certifications: PMP, AWS Certified Solutions Architect, Six Sigma Green Belt
+Languages: English (Native), Spanish (Fluent), Mandarin (Conversational)
+```
+
+---
+
+## 🚀 Phase 7: Execution Checklist for Claude Code
+
+### Step-by-Step Implementation Order
+
+**File**: `IMPLEMENTATION_CHECKLIST.md`
+```markdown
+# Claude Code 4.5 Implementation Checklist
+
+## Phase 0: Setup (30 minutes)
+- [ ] Create project directory structure
+- [ ] Create requirements.txt
+- [ ] Create configuration files (.env.example, system_config.yaml)
+- [ ] Install dependencies: `pip install -r requirements.txt`
+- [ ] Verify Gemini API key is set
+- [ ] Test logger initialization
+
+## Phase 1: Core Infrastructure (2 hours)
+- [ ] Implement src/core/schemas.py (all dataclasses)
+- [ ] Implement src/core/validators.py
+- [ ] Implement src/core/exceptions.py
+- [ ] Implement src/core/config.py
+- [ ] Implement src/utils/logger.py
+- [ ] Implement src/agents/base_agent.py
+- [ ] Run unit tests for core components
+
+## Phase 2: Agent Development (8 hours)
+
+### Agent 1 (30 minutes)
+- [ ] Implement agent1_input_validator.py
+- [ ] Test with .pdf, .docx, .txt files
+- [ ] Verify validation errors work correctly
+
+### Agent 2 (45 minutes)
+- [ ] Implement agent2_template_loader.py
+- [ ] Test with sample PowerPoint template
+- [ ] Verify placeholder extraction
+
+### Agent 3 (2 hours) - CRITICAL
+- [ ] Implement agent3_semantic_extractor.py
+- [ ] Test temporal anchoring (current vs past roles)
+- [ ] Test industry disambiguation
+- [ ] Test skill extraction
+- [ ] Test fallback structure
+- [ ] Verify deterministic extraction (run twice, compare results)
+- [ ] Test retry mechanism
+
+### Agent 4 (1 hour)
+- [ ] Implement agent4_mapping_engine.py
+- [ ] Test AI-based mapping
+- [ ] Test fallback rule-based mapping
+- [ ] Verify mapping validation
+
+### Agent 5 (1 hour)
+- [ ] Implement agent5_placeholder_analyzer.py
+- [ ] Test rule generation
+- [ ] Verify formatting rules
+
+### Agent 6 (2 hours) - CRITICAL
+- [ ] Implement agent6_content_transformer.py
+- [ ] Test hard limit enforcement
+- [ ] Test active voice conversion
+- [ ] Test bullet point conversion
+- [ ] Test markdown formatting (bold, italic)
+- [ ] Test summarization
+- [ ] Test traceability logging
+- [ ] Verify deterministic transformation
+
+## Phase 3: Pipeline Integration (2 hours)
+- [ ] Implement pipeline/orchestrator.py
+- [ ] Implement pipeline/traceability.py
+- [ ] Implement pipeline/advanced_traceability.py
+- [ ] Test end-to-end pipeline
+- [ ] Verify PowerPoint generation
+- [ ] Test traceability matrix export (JSON, Excel, HTML)
+
+## Phase 4: Testing (3 hours)
+- [ ] Create test fixtures (test_template.pptx, sample CVs)
+- [ ] Implement unit tests for Agent 3
+- [ ] Implement unit tests for Agent 6
+- [ ] Implement integration tests
+- [ ] Run full test suite: `pytest tests/ -v --cov=src`
+- [ ] Verify 80%+ code coverage
+
+## Phase 5: Documentation (1 hour)
+- [ ] Complete docs/api_reference.md
+- [ ] Complete docs/user_guide.md
+- [ ] Complete docs/architecture.md
+- [ ] Create examples/basic_example.py
+- [ ] Create examples/sample_cv.txt
+
+## Phase 6: Deployment (30 minutes)
+- [ ] Create deploy.py script
+- [ ] Test deployment on clean environment
+- [ ] Verify all dependencies install correctly
+- [ ] Run deployment tests
+
+## Phase 7: Validation (1 hour)
+- [ ] Run complete pipeline with 3+ different CVs
+- [ ] Verify all requirements met:
+  - [ ] REQ-DET-01: Deterministic processing (temperature=0.0)
+  - [ ] REQ-DET-02: Retry mechanism with progressive strictness
+  - [ ] REQ-DET-03: Deterministic fallback
+  - [ ] REQ-SEM-01: Temporal anchoring
+  - [ ] REQ-SEM-03: Industry disambiguation
+  - [ ] REQ-SEM-04: Enhanced skill extraction
+  - [ ] REQ-A6-01: Hard limit enforcement
+  - [ ] REQ-CON-01: Mixed formatting support
+  - [ ] REQ-CON-02: Active voice conversion
+  - [ ] REQ-EXP-01: Complete traceability
+  - [ ] REQ-EXP-02: Multiple export formats
+- [ ] Generate final traceability matrix
+- [ ] Review quality scores
+
+## Total Estimated Time: 18 hours
+
+## Critical Success Factors
+1. ✅ Agent 3 semantic extraction accuracy > 90%
+2. ✅ Agent 6 compliance rate > 95%
+3. ✅ Deterministic output (identical results on repeated runs)
+4. ✅ Complete traceability for all transformations
+5. ✅ Zero hallucination in CV data extraction
+```
+
+### Final Command Sequence for Claude Code
+
+**File**: `CLAUDE_CODE_COMMANDS.md`
+```markdown
+# Claude Code 4.5 - Execution Commands
+
+## Initial Setup
+```bash
+# Navigate to project directory
+cd cv-automation-system
+
+# Run deployment script
+python deploy.py
+
+# Verify installation
+python -c "import src.core.config; print('✓ Setup complete')"
+```
+
+## Development Execution Order
+
+```bash
+# Phase 1: Core Infrastructure
+python -c "from src.core.schemas import CVData; print('✓ Schemas work')"
+python -c "from src.core.validators import DataValidator; print('✓ Validators work')"
+python -c "from src.utils.logger import logger; logger.info('Test'); print('✓ Logger works')"
+
+# Phase 2: Test Individual Agents
+python -c "from src.agents.agent1_input_validator import Agent1_InputValidator; a=Agent1_InputValidator(); print('✓ Agent 1 initialized')"
+python -c "from src.agents.agent3_semantic_extractor import Agent3_SemanticExtractor; a=Agent3_SemanticExtractor(); print('✓ Agent 3 initialized')"
+python -c "from src.agents.agent6_content_transformer import Agent6_ContentTransformer; a=Agent6_ContentTransformer(); print('✓ Agent 6 initialized')"
+
+# Phase 3: Test Pipeline
+python -c "from src.pipeline.orchestrator import CVAutomationPipeline; p=CVAutomationPipeline(); print('✓ Pipeline initialized')"
+
+# Phase 4: Run Tests
+pytest tests/test_agents/ -v
+pytest tests/test_integration/ -v
+pytest tests/ -v --cov=src --cov-report=html
+
+# Phase 5: Run Example
+python examples/basic_example.py
+
+# Phase 6: Generate Documentation
+python -m pdoc --html --output-dir docs/generated src/
+
+# Phase 7: Final Validation
+python -m src.main --cv examples/sample_cv.txt --template tests/fixtures/test_template.pptx --output outputs/final_test.pptx --trace
+```
+
+## Verification Commands
+
+```bash
+# Check file structure
+tree -L 3 src/
+
+# Verify all agents exist
+ls -la src/agents/
+
+# Check test coverage
+pytest --cov=src --cov-report=term-missing
+
+# Validate traceability export
+ls -la outputs/traceability/
+
+# Check output quality
+python -c "import json; data=json.load(open('outputs/traceability/traceability_*.json')); print(f'Quality: {data[\"summary\"][\"avg_quality_score\"]}')"
+```
+```
+
+---
+
+## 📝 Summary & Next Steps
+
+### What Has Been Delivered
+
+1. **Complete Architecture** (6 Agents + Pipeline)
+   - Agent 1: Input Validator
+   - Agent 2: Template Loader
+   - Agent 3: Semantic Extractor (Gold Standard)
+   - Agent 4: Mapping Engine
+   - Agent 5: Placeholder Analyzer
+   - Agent 6: Content Transformer (Gold Standard)
+
+2. **Core Infrastructure**
+   - Strict schema definitions with dataclasses
+   - Comprehensive validation framework
+   - Custom exception hierarchy
+   - Base agent with deterministic processing
+   - Centralized configuration management
+   - Advanced logging with traceability
+
+3. **Testing Framework**
+   - Unit tests for critical agents
+   - Integration tests for pipeline
+   - Test fixtures and sample data
+   - >80% code coverage target
+
+4. **Traceability System**
+   - JSON export
+   - Excel export with formatting
+   - HTML interactive reports
+   - Quality score calculation
+   - Compliance tracking
+
+5. **Documentation**
+   - API reference
+   - User guide
+   - Architecture documentation
+   - Example scripts
+   - Deployment guide
+
+### Implementation Path for Claude Code 4.5
+
+**Start with**: `deploy.py` to setup environment  
+**Then execute**: Each phase sequentially per checklist  
+**Validate**: After each agent with unit tests  
+**Integrate**: Pipeline orchestration  
+**Verify**: Complete end-to-end with sample data  
+
+**Total Time**: ~18 hours of focused development  
+**Critical Path**: Agent 3 & 6 (semantic + transformation)  
+**Success Metric**: 95%+ compliance, deterministic output, complete traceability
+
+Would you like me to:
+1. Create the main.py entry point script?
+2. Add more specialized transformation rules?
+3. Expand the testing framework?
+4. Create additional example use cases?
