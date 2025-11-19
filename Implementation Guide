@@ -1,0 +1,1589 @@
+"""
+CV TO POWERPOINT AUTOMATION SYSTEM v2.7.4
+FIXED: Blank lines removed to prevent excessive spacing
+
+Author: AI Solutions Architect for BIP Consulting NYC
+Version 2.7.4: Filters out blank lines to eliminate unnecessary spacing in text boxes
+"""
+
+# ============================================================================
+# INSTALLATION AND IMPORTS
+# ============================================================================
+
+!pip install -q python-pptx openpyxl pandas pdfplumber python-docx google-generativeai xlsxwriter
+
+import sys
+import os
+import json
+import logging
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any, List, Tuple, Optional
+import traceback
+
+from pptx import Presentation
+from pptx.util import Pt, Inches
+from pptx.enum.text import PP_ALIGN
+from pptx.dml.color import RGBColor
+
+import pdfplumber
+from docx import Document
+
+import pandas as pd
+import openpyxl
+
+import google.generativeai as genai
+
+from google.colab import files
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+class Config:
+    API_KEY = "AIzaSyDyoIifXX-D5spXK2OTu6LsfCJJugG9T6c"
+    MODEL_NAME = "models/gemini-2.5-pro"
+
+    GENERATION_CONFIG = {
+        "temperature": 0.1,
+        "top_p": 0.95,
+        "top_k": 40,
+        "max_output_tokens": 8192,
+    }
+
+    SAFETY_SETTINGS = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+    ]
+
+genai.configure(api_key=Config.API_KEY)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+def safe_get_text_preview(file_path: str, max_chars: int = 500) -> str:
+    try:
+        ext = Path(file_path).suffix.lower()
+
+        if ext in ['.txt', '.md']:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read(max_chars)
+        elif ext == '.pdf':
+            with pdfplumber.open(file_path) as pdf:
+                if pdf.pages:
+                    return pdf.pages[0].extract_text()[:max_chars]
+        elif ext == '.docx':
+            doc = Document(file_path)
+            text = '\n'.join([p.text for p in doc.paragraphs[:5]])
+            return text[:max_chars]
+        elif ext == '.xlsx':
+            df = pd.read_excel(file_path, nrows=5)
+            return df.to_string()[:max_chars]
+
+        return "Binary file"
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def get_file_metadata(file_path: str) -> Dict[str, Any]:
+    path = Path(file_path)
+    return {
+        'filename': path.name,
+        'extension': path.suffix.lower(),
+        'size_bytes': path.stat().st_size,
+        'size_mb': round(path.stat().st_size / (1024 * 1024), 2),
+        'preview': safe_get_text_preview(file_path)
+    }
+
+def parse_formatting_rule(rule_text: str) -> Dict[str, Any]:
+    """Enhanced to detect mixed formatting requirements."""
+    formatting = {}
+    rule_lower = rule_text.lower()
+
+    # Parse font size
+    size_match = re.search(r'(\d+)\s*pt', rule_lower)
+    if size_match:
+        formatting['font_size'] = Pt(int(size_match.group(1)))
+
+    # Detect bold formatting (global vs mixed)
+    if 'bold' in rule_lower:
+        if any(phrase in rule_lower for phrase in ['bold only', 'bold the', 'bold just', 'bold company', 'bold job', 'bold title']):
+            formatting['mixed_bold'] = True  # Selective bolding
+        else:
+            formatting['bold'] = True  # Apply to all text
+
+    # Detect italic formatting (global vs mixed)
+    if 'italic' in rule_lower:
+        if any(phrase in rule_lower for phrase in ['italic only', 'italicize only', 'italic the', 'italicize the', 'italic company', 'italic title']):
+            formatting['mixed_italic'] = True  # Selective italics
+        else:
+            formatting['italic'] = True  # Apply to all text
+
+    # Detect underline
+    if 'underline' in rule_lower:
+        if any(phrase in rule_lower for phrase in ['underline only', 'underline the', 'underline just']):
+            formatting['mixed_underline'] = True
+        else:
+            formatting['underline'] = True
+
+    # Parse alignment
+    if 'center' in rule_lower or 'centered' in rule_lower:
+        formatting['alignment'] = PP_ALIGN.CENTER
+    elif 'right' in rule_lower:
+        formatting['alignment'] = PP_ALIGN.RIGHT
+    elif 'left' in rule_lower:
+        formatting['alignment'] = PP_ALIGN.LEFT
+
+    # Parse font name
+    font_match = re.search(r'font:\s*([a-zA-Z\s]+)', rule_text, re.IGNORECASE)
+    if font_match:
+        formatting['font_name'] = font_match.group(1).strip()
+
+    for font in ['Arial', 'Calibri', 'Times New Roman', 'Helvetica', 'Verdana']:
+        if font.lower() in rule_lower:
+            formatting['font_name'] = font
+            break
+
+    return formatting
+
+def parse_font_size(font_size_value: Any) -> Optional[Pt]:
+    if pd.isna(font_size_value):
+        return None
+
+    if isinstance(font_size_value, (int, float)):
+        if 0 < font_size_value < 200:
+            return Pt(int(font_size_value))
+
+    font_size_str = str(font_size_value).lower().strip()
+
+    if not font_size_str or font_size_str == 'nan':
+        return None
+
+    size_match = re.search(r'(\d+(?:\.\d+)?)', font_size_str)
+    if size_match:
+        size_val = float(size_match.group(1))
+        if 0 < size_val < 200:
+            return Pt(int(size_val))
+
+    return None
+
+def parse_character_limits(limit_text: str) -> Dict[str, Optional[int]]:
+    limits = {'min': None, 'max': None}
+
+    if not limit_text or pd.isna(limit_text):
+        return limits
+
+    limit_str = str(limit_text).lower()
+
+    min_match = re.search(r'min[:\s]*(\d+)', limit_str)
+    max_match = re.search(r'max[:\s]*(\d+)', limit_str)
+
+    if min_match:
+        limits['min'] = int(min_match.group(1))
+    if max_match:
+        limits['max'] = int(max_match.group(1))
+
+    range_match = re.search(r'(\d+)\s*-\s*(\d+)', limit_str)
+    if range_match:
+        limits['min'] = int(range_match.group(1))
+        limits['max'] = int(range_match.group(2))
+
+    if not limits['min'] and not limits['max']:
+        num_match = re.search(r'(\d+)', limit_str)
+        if num_match:
+            limits['max'] = int(num_match.group(1))
+
+    return limits
+
+# ============================================================================
+# AGENT 1: FILE CLASSIFIER
+# ============================================================================
+
+class Agent1_FileClassifier:
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger('Agent1')
+
+    def classify_files(self, file_paths: List[str]) -> Dict[str, str]:
+        self.logger.info("Starting file classification...")
+
+        if len(file_paths) != 3:
+            raise ValueError(f"Expected 3 files, got {len(file_paths)}")
+
+        file_metadata = []
+        for i, path in enumerate(file_paths, 1):
+            metadata = get_file_metadata(path)
+            file_metadata.append({
+                'file_number': i,
+                'path': path,
+                **metadata
+            })
+
+        prompt = self._create_classification_prompt(file_metadata)
+        response = self.model.generate_content(prompt)
+        result_text = response.text.strip()
+
+        try:
+            if '```json' in result_text:
+                result_text = result_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in result_text:
+                result_text = result_text.split('```')[1].split('```')[0].strip()
+
+            classification = json.loads(result_text)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"Failed to parse LLM response")
+            raise ValueError(f"LLM returned invalid JSON: {e}")
+
+        file_mapping = {}
+        for file_info in file_metadata:
+            file_num = str(file_info['file_number'])
+            if file_num in classification:
+                file_type = classification[file_num]
+                file_mapping[file_type] = file_info['path']
+
+        required_types = ['powerpoint_template', 'cv_document', 'instructions_file']
+        for req_type in required_types:
+            if req_type not in file_mapping:
+                raise ValueError(f"Missing required file type: {req_type}")
+
+        self.logger.info(f"✅ Classification complete")
+        return file_mapping
+
+    def _create_classification_prompt(self, file_metadata: List[Dict]) -> str:
+        metadata_str = ""
+        for meta in file_metadata:
+            metadata_str += f"""
+File {meta['file_number']}:
+- Filename: {meta['filename']}
+- Extension: {meta['extension']}
+- Size: {meta['size_mb']} MB
+- Preview: {meta['preview']}
+---
+"""
+
+        return f"""Classify these three files.
+
+Files:
+{metadata_str}
+
+Categories:
+1. "powerpoint_template" - PowerPoint file (.pptx)
+2. "cv_document" - CV file (.pdf or .docx)
+3. "instructions_file" - Excel file (.xlsx)
+
+Return ONLY valid JSON:
+{{
+  "1": "powerpoint_template",
+  "2": "cv_document",
+  "3": "instructions_file"
+}}"""
+
+# ============================================================================
+# AGENT 2: TEMPLATE PARSER
+# ============================================================================
+
+class Agent2_TemplateParser:
+    def __init__(self):
+        self.logger = logging.getLogger('Agent2')
+
+    def parse_template(self, pptx_path: str) -> Dict[str, Any]:
+        self.logger.info(f"Parsing PowerPoint template...")
+
+        prs = Presentation(pptx_path)
+        placeholders = {}
+
+        for slide_idx, slide in enumerate(prs.slides):
+            for shape_idx, shape in enumerate(slide.shapes):
+                if shape.has_text_frame:
+                    placeholder_name = shape.name
+
+                    if not placeholder_name:
+                        placeholder_name = f"shape_{slide_idx}_{shape_idx}"
+
+                    formatting_info = self._extract_formatting(shape)
+
+                    placeholders[placeholder_name] = {
+                        'slide_index': slide_idx,
+                        'shape_index': shape_idx,
+                        'original_text': shape.text,
+                        **formatting_info
+                    }
+
+        self.logger.info(f"✅ Found {len(placeholders)} placeholders")
+        return {
+            'presentation': prs,
+            'presentation_path': pptx_path,
+            'placeholders': placeholders
+        }
+
+    def _extract_formatting(self, shape) -> Dict[str, Any]:
+        formatting = {
+            'position': (shape.left, shape.top),
+            'size': (shape.width, shape.height),
+            'font_name': None,
+            'font_size': None,
+            'font_color': None,
+            'bold': False,
+            'italic': False,
+            'alignment': None
+        }
+
+        try:
+            if shape.text_frame.paragraphs:
+                para = shape.text_frame.paragraphs[0]
+                formatting['alignment'] = para.alignment
+
+                if para.runs:
+                    run = para.runs[0]
+                    formatting['font_name'] = run.font.name
+                    formatting['font_size'] = run.font.size
+                    formatting['bold'] = run.font.bold
+                    formatting['italic'] = run.font.italic
+
+                    if run.font.color and run.font.color.type == 1:
+                        formatting['font_color'] = run.font.color.rgb
+        except Exception as e:
+            self.logger.warning(f"Error extracting formatting: {e}")
+
+        return formatting
+
+# ============================================================================
+# AGENT 3: CV EXTRACTOR
+# ============================================================================
+
+class Agent3_CVExtractor:
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger('Agent3')
+
+    def extract_cv_data(self, cv_path: str) -> Dict[str, Any]:
+        self.logger.info(f"Extracting FULL CV data...")
+
+        raw_text = self._extract_text(cv_path)
+        self.logger.info(f"Extracted {len(raw_text)} characters from CV")
+
+        structured_data = self._structure_cv_content(raw_text)
+
+        self.logger.info("✅ CV data extracted completely")
+
+        # Log current title and industry information for debugging
+        current_title = structured_data.get('personal_info', {}).get('current_title', 'NOT FOUND')
+        current_company = structured_data.get('personal_info', {}).get('current_company', 'NOT FOUND')
+        industry_spec = structured_data.get('personal_info', {}).get('industry_specialization', 'NOT FOUND')
+
+        print(f"\n📋 CV EXTRACTION SUMMARY:", flush=True)
+        print(f"    • Current Title: {current_title}", flush=True)
+        print(f"    • Current Company: {current_company}", flush=True)
+        print(f"    • Industry Specialization: {industry_spec}", flush=True)
+
+        work_exp = structured_data.get('work_experience', [])
+        if work_exp and len(work_exp) > 0:
+            most_recent = work_exp[0]
+            industry_focus = most_recent.get('industry_focus', 'N/A')
+            print(f"    • Most Recent Position: {most_recent.get('title', 'N/A')} at {most_recent.get('company', 'N/A')}", flush=True)
+            print(f"    • Industry Focus: {industry_focus}", flush=True)
+        sys.stdout.flush()
+
+        return {
+            'raw_text': raw_text,
+            'structured_data': structured_data
+        }
+
+    def _extract_text(self, cv_path: str) -> str:
+        ext = Path(cv_path).suffix.lower()
+
+        if ext == '.pdf':
+            with pdfplumber.open(cv_path) as pdf:
+                text = '\n\n'.join([page.extract_text() for page in pdf.pages if page.extract_text()])
+            return text
+        elif ext == '.docx':
+            doc = Document(cv_path)
+            text = '\n\n'.join([para.text for para in doc.paragraphs if para.text.strip()])
+            return text
+        else:
+            raise ValueError(f"Unsupported CV format: {ext}")
+
+    def _structure_cv_content(self, raw_text: str) -> Dict[str, Any]:
+        prompt = f"""Extract ALL information from this CV. Do NOT truncate.
+
+CV Content:
+{raw_text}
+
+Extract EVERYTHING with special attention to CURRENT position and INDUSTRY SPECIALIZATION:
+{{
+  "personal_info": {{
+    "full_name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "current_title": "[MOST RECENT job title - this is CRITICAL]",
+    "current_company": "[MOST RECENT company name]",
+    "industry_specialization": "[CLIENT INDUSTRY the consultant serves - e.g., Financial Services, Life Sciences, Healthcare, Energy, Technology, Retail, Manufacturing - NOT 'Consulting']",
+    "linkedin": ""
+  }},
+  "professional_summary": "",
+  "work_experience": [
+    {{
+      "company": "[First entry should be CURRENT/MOST RECENT company]",
+      "title": "[CURRENT/MOST RECENT job title]",
+      "dates": "[Most recent dates - e.g., '2023-Present' or '2024-Present']",
+      "location": "",
+      "industry_focus": "[What client industry/sector this role focused on]",
+      "description": "",
+      "responsibilities": [],
+      "achievements": [],
+      "projects": [],
+      "full_details": "",
+      "is_current": true
+    }},
+    {{
+      "company": "[Second most recent]",
+      "title": "",
+      "dates": "[Earlier dates]",
+      "industry_focus": "",
+      "is_current": false
+      ...
+    }}
+  ],
+  "education": [{{"institution": "", "degree": "", "field": "", "dates": "", "gpa": "", "honors": "", "details": ""}}],
+  "skills": {{"technical": [], "soft_skills": [], "tools": [], "languages": []}},
+  "certifications": [],
+  "projects": [],
+  "awards": []
+}}
+
+CRITICAL INSTRUCTIONS FOR INDUSTRY IDENTIFICATION:
+1. Look for industry keywords in the CV like: "Financial Services", "Banking", "Life Sciences", "Pharmaceuticals", "Healthcare", "Energy", "Oil & Gas", "Technology", "Retail", "Consumer Goods", "Manufacturing", "Telecommunications", "Insurance", "Real Estate", etc.
+2. Check project descriptions, client names, or role descriptions for industry clues
+3. If the person is a consultant, identify which CLIENT industry they serve (NOT "Consulting" as the industry)
+4. Look for phrases like "specializing in...", "focused on...", "serving clients in...", "industry expertise in..."
+5. Check if specific industry sectors are mentioned in the professional summary or work experience
+6. If multiple industries are mentioned, list the primary/most recent one in industry_specialization
+7. NEVER return just "Consulting" - always identify the specific client industry served
+
+OTHER CRITICAL INSTRUCTIONS:
+1. Order work_experience from MOST RECENT to oldest
+2. The first work_experience entry should be the current position
+3. Set "is_current": true for the most recent position
+4. Put the current job title in BOTH "personal_info.current_title" AND as the first work_experience entry
+5. If you see "BIP Consulting" or "BIP" as the company, that is likely the current employer
+
+Include ALL bullet points, ALL achievements, ALL project details.
+Return ONLY valid JSON with COMPLETE data."""
+
+        response = self.model.generate_content(prompt)
+        result_text = response.text.strip()
+
+        try:
+            if '```json' in result_text:
+                result_text = result_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in result_text:
+                result_text = result_text.split('```')[1].split('```')[0].strip()
+
+            return json.loads(result_text)
+        except json.JSONDecodeError:
+            self.logger.error("Failed to parse structured CV data")
+            return {"personal_info": {}, "work_experience": [], "raw_text_fallback": raw_text}
+
+# ============================================================================
+# AGENT 4: INSTRUCTIONS PARSER
+# ============================================================================
+
+class Agent4_InstructionsParser:
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger('Agent4')
+
+    def parse_instructions(self, excel_path: str) -> Dict[str, Dict[str, Any]]:
+        self.logger.info(f"Parsing instructions...")
+
+        sys.stdout.flush()
+
+        print("\n" + "=" * 80, flush=True)
+        print("📊 EXCEL FILE ANALYSIS - AGENT 4", flush=True)
+        print("=" * 80, flush=True)
+        sys.stdout.flush()
+
+        try:
+            df = pd.read_excel(excel_path)
+            columns = df.columns.tolist()
+            sample_data = df.head(3).to_dict('records')
+
+            print(f"\n✅ Excel loaded successfully", flush=True)
+            print(f"📋 Columns: {columns}", flush=True)
+            print(f"📊 Rows: {len(df)}, Columns: {len(columns)}", flush=True)
+            sys.stdout.flush()
+
+        except Exception as e:
+            print(f"\n❌ ERROR reading Excel: {e}", flush=True)
+            traceback.print_exc()
+            sys.stdout.flush()
+            raise
+
+        try:
+            column_mapping = self._identify_columns(columns, sample_data)
+
+            print(f"\n✅ LLM identified columns:", flush=True)
+            for role, col_name in column_mapping.items():
+                print(f"  • {role}: '{col_name}'", flush=True)
+            sys.stdout.flush()
+
+        except Exception as e:
+            print(f"\n❌ ERROR in column identification: {e}", flush=True)
+            traceback.print_exc()
+            sys.stdout.flush()
+            column_mapping = {
+                'placeholder_name': columns[0],
+                'content_rules': columns[1] if len(columns) > 1 else columns[0],
+                'formatting_rules': columns[2] if len(columns) > 2 else columns[0]
+            }
+
+        rules_dict = {}
+
+        print("\n" + "=" * 80, flush=True)
+        print("🔍 PARSING EACH ROW", flush=True)
+        print("=" * 80, flush=True)
+        sys.stdout.flush()
+
+        for idx, row in df.iterrows():
+            placeholder = row[column_mapping['placeholder_name']]
+
+            if pd.isna(placeholder) or str(placeholder).strip() == '':
+                continue
+
+            print(f"\n📍 Row {idx + 2}: '{placeholder}'", flush=True)
+            sys.stdout.flush()
+
+            content_rules = str(row[column_mapping['content_rules']]) if not pd.isna(row[column_mapping['content_rules']]) else ''
+            formatting_rules = str(row[column_mapping['formatting_rules']]) if not pd.isna(row[column_mapping['formatting_rules']]) else ''
+
+            char_limits = {'min': None, 'max': None}
+            if 'character_limits' in column_mapping:
+                limit_text = row[column_mapping['character_limits']]
+                char_limits = parse_character_limits(limit_text)
+
+            parsed_formatting = parse_formatting_rule(formatting_rules)
+            print(f"  📝 Format text: '{formatting_rules[:50]}'", flush=True)
+            print(f"  📝 Parsed: {parsed_formatting}", flush=True)
+            sys.stdout.flush()
+
+            if 'font_size' in column_mapping:
+                font_size_col_name = column_mapping['font_size']
+                try:
+                    font_size_value = row[font_size_col_name]
+
+                    print(f"  📏 Font size value: '{font_size_value}' (type: {type(font_size_value).__name__})", flush=True)
+                    sys.stdout.flush()
+
+                    font_size_parsed = parse_font_size(font_size_value)
+                    if font_size_parsed:
+                        parsed_formatting['font_size'] = font_size_parsed
+                        fs_val = font_size_parsed.pt if hasattr(font_size_parsed, 'pt') else font_size_parsed
+                        print(f"  ✅ FONT SIZE PARSED: {fs_val}pt", flush=True)
+                    else:
+                        print(f"  ❌ FAILED to parse: '{font_size_value}'", flush=True)
+                    sys.stdout.flush()
+
+                except Exception as e:
+                    print(f"  ❌ EXCEPTION: {e}", flush=True)
+                    traceback.print_exc()
+                    sys.stdout.flush()
+
+            print(f"  🎨 FINAL: {parsed_formatting}", flush=True)
+            sys.stdout.flush()
+
+            rules_dict[str(placeholder)] = {
+                'content_rules': content_rules,
+                'formatting_rules': formatting_rules,
+                'parsed_formatting': parsed_formatting,
+                'character_limits': char_limits,
+                'row_number': idx + 2
+            }
+
+        print("\n" + "=" * 80, flush=True)
+        print(f"\n✅ Agent 4 complete: {len(rules_dict)} rules\n", flush=True)
+        sys.stdout.flush()
+
+        return rules_dict
+
+    def _identify_columns(self, columns: List[str], sample_data: List[Dict]) -> Dict[str, str]:
+        prompt = f"""Analyze this Excel file.
+
+Columns: {json.dumps(columns, indent=2)}
+Sample: {json.dumps(sample_data, indent=2)}
+
+Identify:
+1. "placeholder_name" - Placeholder names (REQUIRED)
+2. "content_rules" - Content extraction rules (REQUIRED)
+3. "formatting_rules" - Formatting rules (REQUIRED)
+4. "character_limits" - Min/max limits (OPTIONAL)
+5. "font_size" - Font sizes (OPTIONAL)
+
+Return JSON:
+{{
+  "placeholder_name": "actual_column",
+  "content_rules": "actual_column",
+  "formatting_rules": "actual_column",
+  "character_limits": "actual_column_or_null",
+  "font_size": "actual_column_or_null"
+}}
+
+Set optional to null if missing."""
+
+        response = self.model.generate_content(prompt)
+        result_text = response.text.strip()
+
+        try:
+            if '```json' in result_text:
+                result_text = result_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in result_text:
+                result_text = result_text.split('```')[1].split('```')[0].strip()
+
+            column_mapping = json.loads(result_text)
+
+            for optional_col in ['character_limits', 'font_size']:
+                if column_mapping.get(optional_col) in ['null', None, 'None']:
+                    column_mapping.pop(optional_col, None)
+
+            return column_mapping
+        except json.JSONDecodeError:
+            self.logger.warning("Failed to parse, using defaults")
+            return {
+                'placeholder_name': columns[0],
+                'content_rules': columns[1] if len(columns) > 1 else columns[0],
+                'formatting_rules': columns[2] if len(columns) > 2 else columns[0]
+            }
+
+# ============================================================================
+# AGENT 5: CONTENT MAPPER
+# ============================================================================
+
+class Agent5_ContentMapper:
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger('Agent5')
+
+    def map_content(self, placeholders: Dict, cv_data: Dict) -> Dict[str, Dict]:
+        self.logger.info("Mapping content...")
+
+        placeholder_names = list(placeholders.keys())
+        structured_cv = cv_data['structured_data']
+
+        prompt = f"""Map CV to placeholders. Pay careful attention to CURRENT vs PREVIOUS positions and INDUSTRY specialization.
+
+Placeholders: {json.dumps(placeholder_names, indent=2)}
+CV: {json.dumps(structured_cv, indent=2)}
+
+CRITICAL MAPPING RULES:
+1. For "title" or "current title" placeholders:
+   - Find the MOST RECENT position (first in work_experience list)
+   - If the most recent company is "BIP Consulting" or "BIP", use that title
+   - This is the CURRENT title, not previous titles from other companies
+
+2. For "company" placeholders:
+   - Use the most recent company name
+
+3. For "industry" placeholders (CRITICAL):
+   - Look for "industry_specialization" in personal_info
+   - Also check "industry_focus" in the most recent work_experience entry
+   - Return the CLIENT industry the consultant serves (e.g., Financial Services, Life Sciences, Healthcare)
+   - NEVER return just "Consulting" - find the specific industry sector
+   - If multiple industries found, prioritize the most recent/current one
+
+4. For work experience lists:
+   - Order from most recent to oldest
+   - The first position should be the current one
+
+5. Always check dates to identify the most recent/current position
+
+Return JSON:
+{{
+  "placeholder_name": {{
+    "source_section": "section",
+    "source_field": "field",
+    "raw_content": "COMPLETE content",
+    "has_data": true/false,
+    "is_current_position": true/false
+  }}
+}}
+
+For title/current_title placeholders, set "is_current_position": true and use the most recent job title.
+For industry placeholders, use industry_specialization or industry_focus, NOT "Consulting"."""
+
+        response = self.model.generate_content(prompt)
+        result_text = response.text.strip()
+
+        try:
+            if '```json' in result_text:
+                result_text = result_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in result_text:
+                result_text = result_text.split('```')[1].split('```')[0].strip()
+
+            content_mapping = json.loads(result_text)
+            self.logger.info(f"✅ Mapped {len(content_mapping)} placeholders")
+
+            # Log title mapping for debugging
+            print(f"\n🔗 CONTENT MAPPING CHECK:", flush=True)
+            for placeholder, mapping in content_mapping.items():
+                placeholder_lower = placeholder.lower()
+                if 'title' in placeholder_lower or 'industry' in placeholder_lower:
+                    print(f"    • '{placeholder}' → {mapping.get('source_field', 'N/A')}: '{str(mapping.get('raw_content', 'N/A'))[:100]}'", flush=True)
+            sys.stdout.flush()
+
+            return content_mapping
+        except json.JSONDecodeError:
+            self.logger.error("Failed to parse mapping")
+            return {}
+
+# ============================================================================
+# AGENT 6: CONTENT TRANSFORMER (ENHANCED v2.7.5 - Hard Limit Enforcement)
+# ============================================================================
+
+class Agent6_ContentTransformer:
+    def __init__(self, model):
+        self.model = model
+        self.logger = logging.getLogger('Agent6')
+
+    def transform_content(self, content_mapping: Dict, rules: Dict) -> Dict[str, Dict]:
+        self.logger.info("Transforming content...")
+
+        transformed = {}
+
+        for placeholder_name, mapping in content_mapping.items():
+            if not mapping.get('has_data', False):
+                continue
+
+            placeholder_rules = rules.get(placeholder_name, {})
+
+            if not placeholder_rules:
+                transformed[placeholder_name] = {
+                    'original': mapping['raw_content'],
+                    'transformed': str(mapping['raw_content']),
+                    'content_rule_applied': 'None',
+                    'formatting_rule_applied': 'None',
+                    'character_limits': {'min': None, 'max': None},
+                    'character_count': len(str(mapping['raw_content'])),
+                    'rule_compliance': 'N/A'
+                }
+                continue
+
+            transformed_text, compliance, char_count = self._transform_single(
+                placeholder_name,
+                mapping['raw_content'],
+                placeholder_rules
+            )
+
+            transformed[placeholder_name] = {
+                'original': mapping['raw_content'],
+                'transformed': transformed_text,
+                'content_rule_applied': placeholder_rules.get('content_rules', 'None'),
+                'formatting_rule_applied': placeholder_rules.get('formatting_rules', 'None'),
+                'parsed_formatting': placeholder_rules.get('parsed_formatting', {}),
+                'character_limits': placeholder_rules.get('character_limits', {}),
+                'character_count': char_count,
+                'rule_compliance': compliance
+            }
+
+        self.logger.info(f"✅ Transformed {len(transformed)} pieces")
+        return transformed
+
+    def _smart_truncate(self, text: str, max_chars: int, preserve_formatting: bool = True) -> str:
+        """
+        Intelligently truncate text to fit character limit while:
+        - Preserving formatting markup
+        - Not breaking mid-word
+        - Not breaking mid-sentence if possible
+        - Adding ellipsis to indicate truncation
+        """
+        if len(text) <= max_chars:
+            return text
+
+        # If preserving formatting, account for markup characters
+        if preserve_formatting and ('**' in text or '*' in text or '__' in text):
+            # Try to keep within limit while preserving complete markup
+            truncated = text[:max_chars]
+
+            # Check if we broke a markup tag
+            for marker in ['***', '**', '__', '*']:
+                count = truncated.count(marker)
+                if count % 2 != 0:  # Odd number means we broke a tag
+                    # Find the last complete marker
+                    last_complete = truncated.rfind(marker)
+                    if last_complete > max_chars * 0.7:  # Only if we're not losing too much
+                        truncated = truncated[:last_complete]
+        else:
+            truncated = text[:max_chars]
+
+        # Don't break mid-word - backtrack to last space
+        if truncated and not truncated[-1].isspace() and len(truncated) < len(text):
+            last_space = truncated.rfind(' ')
+            last_newline = truncated.rfind('\n')
+            last_break = max(last_space, last_newline)
+
+            if last_break > max_chars * 0.8:  # Only if we're not losing too much (20%)
+                truncated = truncated[:last_break]
+
+        # Try to end at sentence boundary
+        sentence_ends = ['.', '!', '?', '\n']
+        for i in range(len(truncated) - 1, max(0, len(truncated) - 50), -1):
+            if truncated[i] in sentence_ends:
+                truncated = truncated[:i+1]
+                break
+
+        # Add ellipsis if we actually truncated
+        if len(truncated) < len(text):
+            truncated = truncated.rstrip() + '...'
+
+        return truncated
+
+    def _count_characters_without_markup(self, text: str) -> int:
+        """Count characters excluding formatting markup."""
+        clean_text = re.sub(r'\*\*\*|\*\*|__|\*', '', text)
+        return len(clean_text)
+
+    def _transform_single(self, placeholder_name: str, raw_content: Any,
+                          rules: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Enhanced with hard character limit enforcement and retry logic."""
+        content_rules = rules.get('content_rules', 'Use as-is')
+        formatting_rules = rules.get('formatting_rules', '')
+        parsed_formatting = rules.get('parsed_formatting', {})
+        char_limits = rules.get('character_limits', {'min': None, 'max': None})
+
+        if isinstance(raw_content, (list, dict)):
+            raw_content = json.dumps(raw_content, indent=2)
+
+        # Determine if mixed formatting is needed
+        has_mixed_formatting = any(key in parsed_formatting for key in ['mixed_bold', 'mixed_italic', 'mixed_underline'])
+
+        # Build character limit guidance - MAKE IT MORE PROMINENT
+        limit_guidance = ""
+        has_max_limit = char_limits.get('max') is not None
+
+        if has_max_limit or char_limits.get('min'):
+            limit_guidance = f"\n\n{'=' * 70}\n⚠️  CRITICAL CHARACTER LIMITS - MUST COMPLY ⚠️\n{'=' * 70}"
+            if char_limits.get('min'):
+                limit_guidance += f"\n• MINIMUM: {char_limits['min']} characters (too short = rejected)"
+            if has_max_limit:
+                limit_guidance += f"\n• MAXIMUM: {char_limits['max']} characters (too long = rejected)"
+                limit_guidance += f"\n• HARD LIMIT: Your response MUST be under {char_limits['max']} characters"
+                limit_guidance += f"\n• If content is too long, PRIORITIZE and SUMMARIZE to fit limit"
+                limit_guidance += f"\n• Better to include less detail than exceed the limit"
+            limit_guidance += f"\n{'=' * 70}\n"
+
+        markup_instructions = ""
+        if has_mixed_formatting:
+            markup_instructions = """
+
+FORMATTING MARKUP INSTRUCTIONS:
+The formatting rules specify MIXED/SELECTIVE formatting (not all text should be formatted the same).
+Use these MARKDOWN-STYLE markup tags to indicate which parts should be formatted:
+- **text** for bold
+- *text* for italic
+- __text__ for underline
+- You can combine: ***text*** for bold+italic
+
+EXAMPLES OF MIXED FORMATTING:
+- "Bold company names, italicize titles" → "**BIP Consulting** - *Senior Consultant*"
+- "Bold only job titles" → "**Senior Consultant** at BIP Consulting"
+- "Italicize dates" → "Worked from *January 2020 - March 2023* in New York"
+- "Bold key achievements" → "• **Led team of 5** developers\n• Improved efficiency by 30%"
+
+CRITICAL CONSISTENCY RULE:
+When you apply formatting to one instance of something, you MUST apply it to ALL instances.
+
+CRITICAL RULES:
+- NEVER use HTML tags like <font>, <b>, <i>, <u>, <strong>, <em>
+- ONLY use markdown: ** for bold, * for italic, __ for underline
+- Do NOT include any XML, HTML, or bracket-style tags in your response
+- Apply formatting CONSISTENTLY to ALL matching items in a list
+- If rules say "all bold" or "entire text bold", do NOT use markup - just return plain text
+"""
+
+        prompt = f"""Transform this CV content following rules EXACTLY.
+
+Placeholder: {placeholder_name}
+Raw Content: {raw_content}
+
+CONTENT RULES: {content_rules}
+
+FORMATTING RULES: {formatting_rules}{limit_guidance}{markup_instructions}
+
+# =================================================================
+# CRITICAL JSON HANDLING RULE
+# =================================================================
+The 'Raw Content' above may be a JSON object or list. This is intentional.
+- **NEVER** return the raw JSON code in your response.
+- **ALWAYS** transform the JSON into a human-readable format based on the 'CONTENT RULES'.
+# =================================================================
+
+CRITICAL TITLE/POSITION RULES:
+- If this placeholder is for "title", "current title", "job title", or "position":
+  * Use ONLY the most recent/current title from the CV
+  * Do NOT use titles from previous companies
+
+CRITICAL INDUSTRY RULES:
+- If this placeholder is for "industry", "sector", "industry focus", or "specialization":
+  * Return the CLIENT INDUSTRY the consultant serves (e.g., Financial Services, Life Sciences, Healthcare)
+  * NEVER return just "Consulting" as the industry
+
+CRITICAL CAPITALIZATION RULES:
+1. "ALL CAPS" / "UPPERCASE" → Convert ENTIRE text to uppercase
+2. "Title Case" → Capitalize first letter of each major word
+3. "Sentence case" → Only capitalize first letter of first word
+4. "lowercase" → Convert entire text to lowercase
+5. If NO capitalization rule → Preserve original
+
+IMPORTANT:
+- Follow ALL content rules EXACTLY
+- Stay within character limits - THIS IS MANDATORY
+- If you cannot fit everything within the character limit, prioritize the most important information
+- NEVER use HTML, XML, or bracket-based tags
+- Use only markdown formatting (**bold**, *italic*, __underline__)
+
+RESPONSE FORMAT:
+RULE_COMPLIANCE: [FULL/PARTIAL/FAILED]
+CHAR_COUNT: [number]
+[transformed content]
+
+Your response:"""
+
+        max_retries = 2 if has_max_limit else 1
+
+        for attempt in range(max_retries):
+            try:
+                # Adjust temperature based on attempt (stricter on retry)
+                temp_config = Config.GENERATION_CONFIG.copy()
+                if attempt > 0:
+                    temp_config['temperature'] = 0.05  # More deterministic on retry
+                    self.logger.info(f"  🔄 Retry attempt {attempt + 1} for '{placeholder_name}' with lower temperature")
+
+                temp_model = genai.GenerativeModel(
+                    model_name=Config.MODEL_NAME,
+                    generation_config=temp_config,
+                    safety_settings=Config.SAFETY_SETTINGS
+                )
+
+                response = temp_model.generate_content(prompt)
+                response_text = response.text.strip()
+
+                # Parse response
+                lines = response_text.split('\n')
+                compliance = "Unknown"
+                char_count = 0
+                content = response_text
+
+                if 'RULE_COMPLIANCE:' in lines[0]:
+                    compliance = lines[0].replace('RULE_COMPLIANCE:', '').strip()
+                    if len(lines) > 1 and 'CHAR_COUNT:' in lines[1]:
+                        char_count_str = lines[1].replace('CHAR_COUNT:', '').strip()
+                        try:
+                            char_count = int(char_count_str)
+                        except:
+                            pass
+                        content = '\n'.join(lines[2:]).strip()
+                    else:
+                        content = '\n'.join(lines[1:]).strip()
+
+                # Get actual character count
+                actual_count = len(content)
+
+                # Count without markup if formatting is present
+                count_without_markup = self._count_characters_without_markup(content)
+
+                # Check for HTML tags and clean them
+                if re.search(r'<[^>]+>', content):
+                    self.logger.warning(f"⚠️  HTML tags detected in '{placeholder_name}', cleaning...")
+                    content = re.sub(r'<[^>]+>', '', content)
+                    compliance += " (HTML cleaned)"
+
+                # HARD ENFORCEMENT: Check character limits
+                exceeded = False
+                if has_max_limit:
+                    max_limit = char_limits['max']
+
+                    # Check both raw and markup-free counts
+                    if actual_count > max_limit or count_without_markup > max_limit:
+                        exceeded = True
+
+                        if attempt < max_retries - 1:
+                            # Retry with stricter prompt
+                            over_by = actual_count - max_limit
+                            self.logger.warning(f"⚠️  '{placeholder_name}' exceeded limit by {over_by} chars, retrying...")
+
+                            # Make the prompt even more aggressive about limits
+                            prompt = prompt.replace(
+                                f"MAXIMUM: {max_limit} characters",
+                                f"ABSOLUTE MAXIMUM: {max_limit} characters - CURRENT: {actual_count} (TOO LONG!)\nYou MUST reduce by {over_by} characters"
+                            )
+                            continue
+                        else:
+                            # Final attempt failed - apply hard truncation
+                            self.logger.warning(f"⚠️  '{placeholder_name}' still exceeded after retries, truncating...")
+                            content = self._smart_truncate(content, max_limit, preserve_formatting=has_mixed_formatting)
+                            actual_count = len(content)
+                            compliance = f"ENFORCED (truncated from {char_count} to {actual_count})"
+
+                # Check minimum limit
+                if char_limits.get('min') and actual_count < char_limits['min']:
+                    compliance += f" (WARNING: {actual_count} < {char_limits['min']})"
+
+                # Validate formatting consistency
+                if has_mixed_formatting and '**' in content:
+                    lines_check = content.split('\n')
+                    bold_count = content.count('**') // 2
+                    potential_titles = [line for line in lines_check if line.strip() and not line.strip().startswith('•') and not line.strip().startswith('-')]
+                    if len(potential_titles) > 1 and bold_count < len(potential_titles) and bold_count > 0:
+                        self.logger.warning(f"⚠️  Inconsistent formatting in '{placeholder_name}'")
+                        compliance += f" (WARNING: Inconsistent - {bold_count}/{len(potential_titles)} items)"
+
+                # Validate capitalization rules
+                content_rules_lower = content_rules.lower()
+                if any(term in content_rules_lower for term in ['all caps', 'uppercase', 'all uppercase']):
+                    text_without_markup = re.sub(r'\*+|__', '', content)
+                    letters_only = ''.join(c for c in text_without_markup if c.isalpha())
+                    if letters_only and not letters_only.isupper():
+                        compliance += " (WARNING: ALL CAPS rule not fully applied)"
+
+                # Success - break retry loop
+                if not exceeded or attempt == max_retries - 1:
+                    return content, compliance, actual_count
+
+            except Exception as e:
+                self.logger.error(f"Error transforming '{placeholder_name}': {e}")
+                if attempt == max_retries - 1:
+                    return str(raw_content), f"FAILED: {str(e)}", len(str(raw_content))
+
+        # Fallback
+        return str(raw_content), "FAILED", len(str(raw_content))
+
+# ============================================================================
+# AGENT 7: POWERPOINT GENERATOR (FIXED v2.7.3)
+# ============================================================================
+
+class Agent7_PowerPointGenerator:
+    def __init__(self):
+        self.logger = logging.getLogger('Agent7')
+
+    def generate_powerpoint(self, template_data: Dict, transformed_content: Dict) -> str:
+        self.logger.info("Generating PowerPoint...")
+
+        prs = Presentation(template_data['presentation_path'])
+        placeholders = template_data['placeholders']
+
+        populated = 0
+
+        print("\n" + "=" * 80, flush=True)
+        print("🎨 APPLYING CONTENT & FORMATTING", flush=True)
+        print("=" * 80, flush=True)
+        sys.stdout.flush()
+
+        for placeholder_name, content_data in transformed_content.items():
+            if placeholder_name not in placeholders:
+                continue
+
+            placeholder_info = placeholders[placeholder_name]
+            slide_idx = placeholder_info['slide_index']
+            shape_idx = placeholder_info['shape_index']
+
+            instruction_formatting = content_data.get('parsed_formatting', {})
+
+            print(f"\n📌 '{placeholder_name}'", flush=True)
+            if instruction_formatting.get('font_size'):
+                fs = instruction_formatting['font_size']
+                fs_val = fs.pt if hasattr(fs, 'pt') else fs
+                print(f"    ✅ Font size: {fs_val}pt", flush=True)
+            else:
+                print(f"    ⚠️  NO font size", flush=True)
+
+            # Check for mixed formatting
+            has_mixed = any(key in instruction_formatting for key in ['mixed_bold', 'mixed_italic', 'mixed_underline'])
+            if has_mixed:
+                print(f"    🎨 Mixed formatting detected", flush=True)
+
+            sys.stdout.flush()
+
+            try:
+                slide = prs.slides[slide_idx]
+                shape = slide.shapes[shape_idx]
+
+                if shape.has_text_frame:
+                    template_formatting = placeholder_info
+                    final_formatting = {**template_formatting, **instruction_formatting}
+
+                    shape.text_frame.clear()
+
+                    if not shape.text_frame.paragraphs:
+                        shape.text_frame.add_paragraph()
+
+                    p = shape.text_frame.paragraphs[0]
+
+                    transformed_text = content_data['transformed']
+                    self._apply_formatting(p, final_formatting, transformed_text)
+
+                    populated += 1
+
+            except Exception as e:
+                self.logger.error(f"Error populating '{placeholder_name}': {e}")
+                traceback.print_exc()
+
+        print("\n" + "=" * 80, flush=True)
+        sys.stdout.flush()
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f"CV_OneSlider_{timestamp}.pptx"
+        prs.save(output_path)
+
+        self.logger.info(f"✅ Saved: {output_path} ({populated} populated)")
+        return output_path
+
+    def _strip_html_tags(self, text: str) -> str:
+        """Remove any HTML/XML tags from text."""
+        clean_text = re.sub(r'<[^>]+>', '', text)
+        return clean_text
+
+    def _parse_formatted_text(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Parse markdown-style formatting and return a list of text segments with formatting.
+        Strips any HTML tags that may have been incorrectly included.
+        """
+        text = self._strip_html_tags(text)
+
+        segments = []
+        i = 0
+
+        while i < len(text):
+            # Check for ***text*** (bold + italic)
+            if text[i:i+3] == '***':
+                end = text.find('***', i+3)
+                if end != -1:
+                    segments.append({
+                        'text': text[i+3:end],
+                        'bold': True,
+                        'italic': True,
+                        'underline': False
+                    })
+                    i = end + 3
+                    continue
+
+            # Check for **text** (bold)
+            if text[i:i+2] == '**':
+                end = text.find('**', i+2)
+                if end != -1:
+                    segments.append({
+                        'text': text[i+2:end],
+                        'bold': True,
+                        'italic': False,
+                        'underline': False
+                    })
+                    i = end + 2
+                    continue
+
+            # Check for __text__ (underline)
+            if text[i:i+2] == '__':
+                end = text.find('__', i+2)
+                if end != -1:
+                    segments.append({
+                        'text': text[i+2:end],
+                        'bold': False,
+                        'italic': False,
+                        'underline': True
+                    })
+                    i = end + 2
+                    continue
+
+            # Check for *text* (italic)
+            if text[i] == '*':
+                end = text.find('*', i+1)
+                if end != -1:
+                    segments.append({
+                        'text': text[i+1:end],
+                        'bold': False,
+                        'italic': True,
+                        'underline': False
+                    })
+                    i = end + 1
+                    continue
+
+            # Regular text - find next marker or end
+            next_marker = len(text)
+            for marker in ['***', '**', '__', '*']:
+                pos = text.find(marker, i)
+                if pos != -1 and pos < next_marker:
+                    next_marker = pos
+
+            if i < next_marker:
+                segments.append({
+                    'text': text[i:next_marker],
+                    'bold': False,
+                    'italic': False,
+                    'underline': False
+                })
+
+            i = next_marker if next_marker < len(text) else len(text)
+
+        return segments if segments else [{'text': text, 'bold': False, 'italic': False, 'underline': False}]
+
+    def _apply_formatting(self, paragraph, formatting_info: Dict, transformed_text: str):
+        """
+        Apply formatting to paragraph, supporting mixed formatting via markup.
+        FIXED v2.7.3: Smart paragraph spacing - bold lines get 12pt before, regular lines get 0pt before.
+        """
+        try:
+            # Get text frame from the paragraph
+            text_frame = paragraph._parent
+
+            # Clear existing content
+            text_frame.clear()
+
+            # Split text into lines and filter out blank lines
+            all_lines = transformed_text.split('\n')
+            lines = [line for line in all_lines if line.strip()]
+
+            # Determine formatting settings
+            global_bold = formatting_info.get('bold')
+            global_italic = formatting_info.get('italic')
+            global_underline = formatting_info.get('underline')
+            global_font_size = formatting_info.get('font_size')
+            global_font_name = formatting_info.get('font_name')
+            global_font_color = formatting_info.get('font_color')
+
+            # Create a paragraph for each line
+            for line_idx, line_text in enumerate(lines):
+                # Create new paragraph (first one already exists)
+                if line_idx == 0:
+                    p = text_frame.paragraphs[0]
+                else:
+                    p = text_frame.add_paragraph()
+
+                # Set paragraph-level formatting
+                if formatting_info.get('alignment'):
+                    p.alignment = formatting_info['alignment']
+
+                # Parse the line for formatting markup
+                segments = self._parse_formatted_text(line_text)
+                has_segment_formatting = any(s['bold'] or s['italic'] or s['underline'] for s in segments)
+
+                # Check if this line contains bold text
+                has_bold = global_bold or any(s['bold'] for s in segments)
+
+                # Set paragraph spacing based on bold presence
+                if has_bold:
+                    p.space_before = Pt(12)
+                    p.space_after = Pt(6)
+                else:
+                    p.space_before = Pt(0)
+                    p.space_after = Pt(6)
+
+                # Create runs for each segment
+                for segment in segments:
+                    run = p.add_run()
+                    run.text = segment['text']
+
+                    # Apply segment-specific formatting
+                    if has_segment_formatting:
+                        if segment['bold']:
+                            run.font.bold = True
+                        if segment['italic']:
+                            run.font.italic = True
+                        if segment['underline']:
+                            run.font.underline = True
+                    else:
+                        if global_bold:
+                            run.font.bold = True
+                        if global_italic:
+                            run.font.italic = True
+                        if global_underline:
+                            run.font.underline = True
+
+                    # Always apply global settings
+                    if global_font_name:
+                        run.font.name = global_font_name
+                    if global_font_size:
+                        run.font.size = global_font_size
+                    if global_font_color:
+                        run.font.color.rgb = global_font_color
+
+        except Exception as e:
+            self.logger.warning(f"Formatting error: {e}")
+            traceback.print_exc()
+            # Fallback: just set the text without formatting
+            paragraph.text = transformed_text
+
+# ============================================================================
+# AGENT 8: TRACEABILITY REPORTER
+# ============================================================================
+
+class Agent8_TraceabilityReporter:
+    def __init__(self):
+        self.logger = logging.getLogger('Agent8')
+
+    def generate_report(self, content_mapping: Dict, transformed_content: Dict, rules: Dict) -> str:
+        self.logger.info("Generating report...")
+
+        report_data = []
+
+        for placeholder_name, mapping in content_mapping.items():
+            transformation = transformed_content.get(placeholder_name, {})
+            placeholder_rules = rules.get(placeholder_name, {})
+
+            original = str(mapping.get('raw_content', ''))
+            transformed_text = str(transformation.get('transformed', ''))
+
+            char_limits = transformation.get('character_limits', {})
+            char_count = transformation.get('character_count', len(transformed_text))
+
+            limit_str = ""
+            if char_limits.get('min') or char_limits.get('max'):
+                limit_str = f"Min: {char_limits.get('min', 'N/A')}, Max: {char_limits.get('max', 'N/A')}"
+
+            parsed_formatting = transformation.get('parsed_formatting', {})
+            font_size_str = ""
+            if parsed_formatting.get('font_size'):
+                font_size_pt = parsed_formatting['font_size']
+                if hasattr(font_size_pt, 'pt'):
+                    font_size_str = f"{int(font_size_pt.pt)}pt"
+                else:
+                    font_size_str = str(font_size_pt)
+
+            # Check for mixed formatting indicators
+            formatting_type = "Global"
+            if any(key in parsed_formatting for key in ['mixed_bold', 'mixed_italic', 'mixed_underline']):
+                formatting_type = "Mixed/Selective"
+
+            report_data.append({
+                'Placeholder': placeholder_name,
+                'Source Section': mapping.get('source_section', 'N/A'),
+                'Original CV (FULL)': original,
+                'Content Rule': placeholder_rules.get('content_rules', 'None'),
+                'Char Limits': limit_str,
+                'Transformed (FULL)': transformed_text,
+                'Char Count': char_count,
+                'Font Size': font_size_str,
+                'Format Rule': placeholder_rules.get('formatting_rules', 'None'),
+                'Format Type': formatting_type,
+                'Compliance': transformation.get('rule_compliance', 'N/A'),
+                'Status': 'Populated' if transformation else 'Skipped'
+            })
+
+        df = pd.DataFrame(report_data)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_path = f"Traceability_{timestamp}.xlsx"
+
+        with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Traceability', index=False)
+
+            # Create summary metrics
+            summary = {
+                'Metric': [
+                    'Total Placeholders',
+                    'Populated',
+                    'Skipped',
+                    'Full Compliance',
+                    'Partial',
+                    'Warnings',
+                    'Mixed Formatting',
+                    'Global Formatting',
+                    'Date'
+                ],
+                'Value': [
+                    len(df),
+                    len(df[df['Status'] == 'Populated']),
+                    len(df[df['Status'] == 'Skipped']),
+                    len([c for c in df['Compliance'] if 'FULL' in str(c)]),
+                    len([c for c in df['Compliance'] if 'PARTIAL' in str(c)]),
+                    len([c for c in df['Compliance'] if 'WARNING' in str(c)]),
+                    len(df[df['Format Type'] == 'Mixed/Selective']),
+                    len(df[df['Format Type'] == 'Global']),
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ]
+            }
+            summary_df = pd.DataFrame(summary)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+
+            workbook = writer.book
+            header_format = workbook.add_format({
+                'bold': True,
+                'bg_color': '#4472C4',
+                'font_color': 'white'
+            })
+
+            for sheet_name in ['Traceability', 'Summary']:
+                worksheet = writer.sheets[sheet_name]
+                cols = df.columns if sheet_name == 'Traceability' else summary_df.columns
+                for col_num, value in enumerate(cols.values):
+                    worksheet.write(0, col_num, value, header_format)
+                    worksheet.set_column(col_num, col_num, 30)
+
+        self.logger.info(f"✅ Report: {output_path}")
+        return output_path
+
+# ============================================================================
+# ORCHESTRATOR
+# ============================================================================
+
+class CVToPowerPointOrchestrator:
+    def __init__(self):
+        self.state = {}
+        self.logger = logging.getLogger('Orchestrator')
+
+        self.model = genai.GenerativeModel(
+            model_name=Config.MODEL_NAME,
+            generation_config=Config.GENERATION_CONFIG,
+            safety_settings=Config.SAFETY_SETTINGS
+        )
+
+        self.agent1 = Agent1_FileClassifier(self.model)
+        self.agent2 = Agent2_TemplateParser()
+        self.agent3 = Agent3_CVExtractor(self.model)
+        self.agent4 = Agent4_InstructionsParser(self.model)
+        self.agent5 = Agent5_ContentMapper(self.model)
+        self.agent6 = Agent6_ContentTransformer(self.model)
+        self.agent7 = Agent7_PowerPointGenerator()
+        self.agent8 = Agent8_TraceabilityReporter()
+
+    def run(self, file_paths: List[str]) -> Dict[str, Any]:
+        try:
+            print("\n" + "=" * 80)
+            print("🚀 CV TO POWERPOINT v2.7.4 - BLANK LINE REMOVAL")
+            print("=" * 80 + "\n")
+            sys.stdout.flush()
+
+            print("📂 AGENT 1: Classifying...")
+            file_mapping = self.agent1.classify_files(file_paths)
+            self.state.update(file_mapping)
+
+            print("\n📄 AGENT 2: Parsing Template...")
+            template_data = self.agent2.parse_template(self.state['powerpoint_template'])
+            self.state['template_data'] = template_data
+
+            print("\n📋 AGENT 3: Extracting CV...")
+            cv_data = self.agent3.extract_cv_data(self.state['cv_document'])
+            self.state['cv_data'] = cv_data
+
+            print("\n📊 AGENT 4: Parsing Instructions...")
+            sys.stdout.flush()
+            rules = self.agent4.parse_instructions(self.state['instructions_file'])
+            self.state['rules'] = rules
+            sys.stdout.flush()
+
+            print("\n🔗 AGENT 5: Mapping...")
+            content_mapping = self.agent5.map_content(
+                self.state['template_data']['placeholders'],
+                self.state['cv_data']
+            )
+            self.state['content_mapping'] = content_mapping
+
+            print("\n✨ AGENT 6: Transforming...")
+            transformed_content = self.agent6.transform_content(
+                content_mapping,
+                self.state['rules']
+            )
+            self.state['transformed_content'] = transformed_content
+
+            print("\n📑 AGENT 7: Generating PPT...")
+            output_pptx = self.agent7.generate_powerpoint(
+                self.state['template_data'],
+                self.state['transformed_content']
+            )
+
+            print("\n📈 AGENT 8: Creating Report...")
+            traceability = self.agent8.generate_report(
+                self.state['content_mapping'],
+                self.state['transformed_content'],
+                self.state['rules']
+            )
+
+            print("\n" + "=" * 80)
+            print("✅ COMPLETE!")
+            print("=" * 80 + "\n")
+
+            return {
+                'status': 'SUCCESS',
+                'powerpoint_path': output_pptx,
+                'traceability_path': traceability,
+                'placeholders_processed': len(transformed_content),
+                'total_placeholders': len(template_data['placeholders'])
+            }
+
+        except Exception as e:
+            print(f"\n❌ FAILED: {str(e)}")
+            traceback.print_exc()
+            return {'status': 'FAILED', 'error': str(e)}
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    print("=" * 80)
+    print("CV TO POWERPOINT AUTOMATION v2.7.3")
+    print("FIXED: Smart paragraph spacing based on bold formatting")
+    print("BIP Consulting - NYC")
+    print("=" * 80)
+    print("\n✨ VERSION 2.7.3 FEATURES:")
+    print("  • Bold lines: Before: 12pt, After: 6pt")
+    print("  • Regular lines: Before: 0pt, After: 6pt")
+    print("  • Automatic detection of bold text in each line")
+    print("\n✨ PREVIOUS FEATURES:")
+    print("  • Each line is a separate paragraph (v2.7.1)")
+    print("  • Mixed formatting support (selective bold/italic/underline)")
+    print("  • Enhanced capitalization rule enforcement")
+    print("  • Markup-based formatting (**bold**, *italic*, __underline__)")
+    print("\n")
+
+    print("📤 UPLOAD FILES")
+    print("-" * 80)
+    print("Upload 3 files:")
+    print("  1. PowerPoint Template (.pptx)")
+    print("  2. Employee CV (.pdf or .docx)")
+    print("  3. Instructions (.xlsx)")
+    print("\nInstructions can include:")
+    print("  - Character limits column")
+    print("  - Font size column")
+    print("  - Mixed formatting rules (e.g., 'bold only company names')\n")
+
+    uploaded = files.upload()
+
+    if len(uploaded) != 3:
+        print(f"\n❌ ERROR: Expected 3 files, got {len(uploaded)}")
+        return
+
+    file_paths = list(uploaded.keys())
+
+    print(f"\n✅ Received {len(file_paths)} files:")
+    for path in file_paths:
+        print(f"    - {path}")
+
+    orchestrator = CVToPowerPointOrchestrator()
+    results = orchestrator.run(file_paths)
+
+    print("\n" + "=" * 80)
+    print("📊 RESULTS")
+    print("=" * 80)
+
+    if results['status'] == 'SUCCESS':
+        print(f"\n✅ SUCCESS!\n")
+        print(f"📑 PowerPoint: {results['powerpoint_path']}")
+        print(f"📈 Traceability: {results['traceability_path']}")
+        print(f"\n📊 Stats:")
+        print(f"    - Total: {results['total_placeholders']}")
+        print(f"    - Populated: {results['placeholders_processed']}")
+
+        print("\n💾 DOWNLOADING...")
+        files.download(results['powerpoint_path'])
+        files.download(results['traceability_path'])
+        print("\n✨ Done!")
+    else:
+        print(f"\n❌ FAILED: {results['error']}")
+
+if __name__ == "__main__":
+    main()
